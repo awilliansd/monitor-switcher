@@ -89,22 +89,57 @@ class MonitorSwitcherApp {
     setPrimary(displayId, modeName) {
         if (!displayId || displayId.trim() === '') {
             console.log('Display ID vazio');
+            this.showError('Display ID não configurado corretamente');
             return;
         }
 
-        const args = ['/SetPrimary', `"${displayId}"`];
+        console.log(`Tentando definir monitor principal: ${displayId}`);
+        console.log(`Modo: ${modeName}`);
+
+        // Converte os nomes de display para números
+        let displayNumber = '';
+        
+        if (displayId.includes('DISPLAY1') || displayId === '1') {
+            displayNumber = '1';
+        } else if (displayId.includes('DISPLAY2') || displayId === '2') {
+            displayNumber = '2';
+        } else {
+            // Se não for um formato reconhecido, tenta usar como está
+            displayNumber = displayId;
+        }
+        
+        const args = ['/SetPrimary', displayNumber];
+        
+        console.log(`Comando: ${this.tool} ${args.join(' ')}`);
         
         try {
             const process = spawn(this.tool, args, {
-                stdio: 'ignore',
-                detached: false
+                stdio: ['ignore', 'pipe', 'pipe'],
+                detached: false,
+                windowsHide: true,
+                shell: false
+            });
+
+            let stdout = '';
+            let stderr = '';
+
+            process.stdout.on('data', (data) => {
+                stdout += data.toString();
+            });
+
+            process.stderr.on('data', (data) => {
+                stderr += data.toString();
             });
 
             process.on('close', (code) => {
+                console.log(`Processo terminou com código: ${code}`);
+                if (stdout) console.log(`stdout: ${stdout}`);
+                if (stderr) console.log(`stderr: ${stderr}`);
+                
                 if (code === 0) {
                     this.showBalloon(`Alterado para ${modeName}.`);
                 } else {
-                    console.error(`Processo terminou com código: ${code}`);
+                    this.showError(`Erro ao alterar monitor (código ${code}):\n${stderr || 'Erro desconhecido'}`);
                 }
             });
 
@@ -133,6 +168,110 @@ class MonitorSwitcherApp {
         } else {
             console.log('Notificações não suportadas:', message);
         }
+    }
+
+    listMonitors() {
+        const process = spawn(this.tool, ['/scomma', 'monitors_temp.csv'], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            detached: false,
+            windowsHide: true
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        process.stdout.on('data', (data) => {
+            stdout += data.toString();
+        });
+
+        process.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+
+        process.on('close', (code) => {
+            if (code === 0) {
+                // Lê o arquivo CSV gerado
+                setTimeout(() => {
+                    try {
+                        if (fs.existsSync('monitors_temp.csv')) {
+                            const csvData = fs.readFileSync('monitors_temp.csv', 'utf8');
+                            const lines = csvData.split('\n');
+                            
+                            let monitorInfo = 'Monitores encontrados:\n\n';
+                            
+                            lines.forEach((line, index) => {
+                                if (index === 0) return; // Pula o cabeçalho
+                                if (line.trim() === '') return; // Pula linhas vazias
+                                
+                                const fields = line.split(',');
+                                if (fields.length > 0) {
+                                    const name = fields[0] ? fields[0].replace(/"/g, '') : '';
+                                    const description = fields[1] ? fields[1].replace(/"/g, '') : '';
+                                    const active = fields[2] ? fields[2].replace(/"/g, '') : '';
+                                    const primary = fields[3] ? fields[3].replace(/"/g, '') : '';
+                                    
+                                    monitorInfo += `Nome: ${name}\n`;
+                                    monitorInfo += `Descrição: ${description}\n`;
+                                    monitorInfo += `Ativo: ${active}\n`;
+                                    monitorInfo += `Principal: ${primary}\n\n`;
+                                }
+                            });
+                            
+                            monitorInfo += `\nConfiguração atual:\n`;
+                            monitorInfo += `DISPLAY1=${this.display1}\n`;
+                            monitorInfo += `DISPLAY2=${this.display2}`;
+                            
+                            this.showInfo('Lista de Monitores', monitorInfo);
+                            
+                            // Remove o arquivo temporário
+                            fs.unlinkSync('monitors_temp.csv');
+                        }
+                    } catch (error) {
+                        console.error('Erro ao ler lista de monitores:', error);
+                        this.showError('Erro ao listar monitores: ' + error.message);
+                    }
+                }, 1000);
+            } else {
+                this.showError(`Erro ao listar monitores (código ${code}):\n${stderr || 'Erro desconhecido'}`);
+            }
+        });
+    }
+
+    testConfiguration() {
+        let testResult = 'Teste de Configuração:\n\n';
+        
+        // Verifica se os arquivos existem
+        testResult += `✓ MultiMonitorTool.exe: ${fs.existsSync(this.tool) ? 'Encontrado' : 'NÃO ENCONTRADO'}\n`;
+        testResult += `✓ display_config.txt: ${fs.existsSync(this.configFile) ? 'Encontrado' : 'NÃO ENCONTRADO'}\n`;
+        
+        // Verifica configuração
+        testResult += `\nConfigurações carregadas:\n`;
+        testResult += `DISPLAY1: ${this.display1 || 'NÃO CONFIGURADO'}\n`;
+        testResult += `DISPLAY2: ${this.display2 || 'NÃO CONFIGURADO'}\n`;
+        
+        // Testa comando básico
+        testResult += `\nTestando comando básico...\n`;
+        
+        const process = spawn(this.tool, ['/help'], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            detached: false,
+            windowsHide: true
+        });
+
+        process.on('close', (code) => {
+            if (code === 0) {
+                testResult += `✓ MultiMonitorTool.exe responde corretamente\n`;
+            } else {
+                testResult += `✗ MultiMonitorTool.exe falhou (código ${code})\n`;
+            }
+            
+            this.showInfo('Teste de Configuração', testResult);
+        });
+
+        process.on('error', (error) => {
+            testResult += `✗ Erro ao executar MultiMonitorTool.exe: ${error.message}\n`;
+            this.showInfo('Teste de Configuração', testResult);
+        });
     }
 
     async showError(message) {

@@ -19,13 +19,23 @@ Configuração
 Arquivo display_config.txt
 Crie um arquivo display_config.txt com as configurações dos seus monitores:
 
+DISPLAY1=1
+DISPLAY2=2
+Formato simples (recomendado):
+
+Use números simples: 1, 2, 3, etc.
+Corresponde à ordem dos monitores no sistema
+Formato alternativo (compatível):
+
 DISPLAY1=\\.\DISPLAY1
 DISPLAY2=\\.\DISPLAY2
-Para descobrir os IDs dos seus monitores:
+Para descobrir qual número usar:
 
-Execute o MultiMonitorTool.exe
-Veja a coluna "Name" para identificar cada monitor
-Use esses valores no arquivo de configuração
+Teste manualmente no prompt de comando:
+cmd
+MultiMonitorTool.exe /SetPrimary 1
+MultiMonitorTool.exe /SetPrimary 2
+Ou execute o MultiMonitorTool.exe e veja a ordem dos monitores
 Arquivo de Ícone
 Coloque o arquivo monitorswitcher.ico na pasta raiz do projeto. Se não tiver o ícone, o aplicativo funcionará com um ícone padrão.
 

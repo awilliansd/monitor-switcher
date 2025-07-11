@@ -1,2 +1,28 @@
-DISPLAY1=\\.\DISPLAY1
-DISPLAY2=\\.\DISPLAY2
+# Configuração de Displays - Monitor Switcher
+# 
+# IMPORTANTE: Use números simples (1, 2, 3) para os displays
+# Isso funciona com o MultiMonitorTool.exe na linha de comando
+# 
+# Formato correto:
+# DISPLAY1=1  (para o primeiro monitor)
+# DISPLAY2=2  (para o segundo monitor)
+# DISPLAY3=3  (para o terceiro monitor, se existir)
+# 
+# Ou pode usar os nomes antigos que serão convertidos automaticamente:
+# DISPLAY1=\\.\DISPLAY1  (será convertido para 1)
+# DISPLAY2=\\.\DISPLAY2  (será convertido para 2)
+
+# Configuração recomendada:
+DISPLAY1=1
+DISPLAY2=2
+
+# Configuração alternativa (funciona também):
+# DISPLAY1=\\.\DISPLAY1
+# DISPLAY2=\\.\DISPLAY2
+
+# Para verificar qual monitor é qual:
+# 1. Execute o MultiMonitorTool.exe diretamente
+# 2. Ou use os comandos:
+#    MultiMonitorTool.exe /SetPrimary 1
+#    MultiMonitorTool.exe /SetPrimary 2
+# 3. Veja qual monitor fica como principal

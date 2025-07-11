@@ -16,14 +16,14 @@
     "tray",
     "multi-monitor"
   ],
-  "author": "Seu Nome",
+  "author": "Alessandro Willian",
   "license": "MIT",
   "devDependencies": {
     "electron": "^27.0.0",
     "electron-builder": "^24.6.4"
   },
   "build": {
-    "appId": "com.yourcompany.monitorswitcher",
+    "appId": "com.private.monitorswitcher",
     "productName": "Monitor Switcher",
     "directories": {
       "output": "dist"

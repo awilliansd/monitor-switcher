@@ -37,24 +37,36 @@ class MonitorSwitcherApp {
         
         // Configura o nome da aplicação para notificações no Windows
         if (process.platform === 'win32') {
-            app.setAppUserModelId('com.private.monitorswitcher');
+            app.setAppUserModelId('MonitorSwitcher');
+        }
+        
+        // Verifica se foi iniciado automaticamente com o Windows
+        const isAutoStarted = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
+        
+        if (isAutoStarted) {
+            console.log('Aplicativo iniciado automaticamente com o Windows');
         }
         
         // Verifica se os arquivos necessários existem
         if (!fs.existsSync(this.tool)) {
-            await this.showError(`Arquivo '${path.basename(this.tool)}' não encontrado em:\n${this.tool}`);
-            app.quit();
+            this.showError(`Arquivo '${path.basename(this.tool)}' não encontrado em:\n${this.tool}`);
+            setTimeout(() => app.quit(), 3000);
             return;
         }
 
         if (!fs.existsSync(this.configFile)) {
-            await this.showError(`Arquivo '${path.basename(this.configFile)}' não encontrado em:\n${this.configFile}`);
-            app.quit();
+            this.showError(`Arquivo '${path.basename(this.configFile)}' não encontrado em:\n${this.configFile}`);
+            setTimeout(() => app.quit(), 3000);
             return;
         }
 
         this.loadDisplayConfig();
         this.createTray();
+        
+        // Mostra notificação apenas se não foi iniciado automaticamente
+        if (!isAutoStarted && !this.isDev) {
+            this.showBalloon('Monitor Switcher iniciado');
+        }
     }
 
     loadDisplayConfig() {
@@ -113,6 +125,13 @@ class MonitorSwitcherApp {
             },
             { type: 'separator' },
             {
+                label: 'Iniciar com Windows',
+                type: 'checkbox',
+                checked: app.getLoginItemSettings().openAtLogin,
+                click: () => this.toggleAutoStart()
+            },
+            { type: 'separator' },
+            {
                 label: 'Sair',
                 click: () => {
                     app.quit();
@@ -121,6 +140,17 @@ class MonitorSwitcherApp {
         ]);
 
         this.tray.setContextMenu(contextMenu);
+    }
+
+    async showError(message) {
+        const options = {
+            type: 'error',
+            title: 'Erro',
+            message: message,
+            buttons: ['OK']
+        };
+
+        await dialog.showMessageBox(options);
     }
 
     setPrimary(displayId, modeName) {
@@ -330,15 +360,62 @@ class MonitorSwitcherApp {
         });
     }
 
-    async showError(message) {
-        const options = {
-            type: 'error',
-            title: 'Erro',
-            message: message,
-            buttons: ['OK']
-        };
+    toggleAutoStart() {
+        const currentSettings = app.getLoginItemSettings();
+        const willOpenAtLogin = !currentSettings.openAtLogin;
+        
+        app.setLoginItemSettings({
+            openAtLogin: willOpenAtLogin,
+            openAsHidden: true, // Inicia minimizado
+            name: 'Monitor Switcher',
+            path: process.execPath
+        });
+        
+        // Atualiza o menu
+        this.updateTrayMenu();
+        
+        // Mostra notificação
+        const status = willOpenAtLogin ? 'habilitado' : 'desabilitado';
+        this.showBalloon(`Inicialização automática ${status}`);
+    }
 
-        await dialog.showMessageBox(options);
+    updateTrayMenu() {
+        // Recria o menu com o estado atualizado
+        const contextMenu = Menu.buildFromTemplate([
+            {
+                label: 'Modo Reunião',
+                click: () => this.setPrimary(this.display2, 'Modo Reunião')
+            },
+            {
+                label: 'Modo Jogo',
+                click: () => this.setPrimary(this.display1, 'Modo Jogo')
+            },
+            { type: 'separator' },
+            {
+                label: 'Listar Monitores',
+                click: () => this.listMonitors()
+            },
+            {
+                label: 'Testar Configuração',
+                click: () => this.testConfiguration()
+            },
+            { type: 'separator' },
+            {
+                label: 'Iniciar com Windows',
+                type: 'checkbox',
+                checked: app.getLoginItemSettings().openAtLogin,
+                click: () => this.toggleAutoStart()
+            },
+            { type: 'separator' },
+            {
+                label: 'Sair',
+                click: () => {
+                    app.quit();
+                }
+            }
+        ]);
+
+        this.tray.setContextMenu(contextMenu);
     }
 
     async showInfo(title, message) {

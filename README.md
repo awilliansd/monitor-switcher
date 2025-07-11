@@ -1,116 +1,177 @@
-Monitor Switcher - Electron
-Aplicativo de bandeja do sistema para alternar entre monitores principais usando o MultiMonitorTool.exe.
+# Monitor Switcher
 
-Funcionalidades
-Modo Reunião: Define o segundo monitor como principal
-Modo Jogo: Define o primeiro monitor como principal
-Ícone na bandeja: Aplicativo fica minimizado na bandeja do sistema
-Notificações: Mostra notificações quando o modo é alterado
-Requisitos
-Node.js (versão 16 ou superior)
-Windows (devido à dependência do MultiMonitorTool.exe)
-MultiMonitorTool.exe (deve estar na mesma pasta do aplicativo)
-Instalação
-Clone ou baixe o projeto
-Instale as dependências:
-bash
+Um aplicativo de bandeja do sistema desenvolvido em Electron para alternar facilmente entre monitores principais usando o MultiMonitorTool.
+
+![Monitor Switcher](https://img.shields.io/badge/version-1.0.3-blue.svg)
+![Electron](https://img.shields.io/badge/Electron-27.0.0-brightgreen.svg)
+![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
+
+## 📋 Descrição
+
+O Monitor Switcher é uma solução simples e eficiente para usuários que trabalham com múltiplos monitores e precisam alternar rapidamente entre diferentes configurações de monitor principal. Ideal para quem usa configurações específicas para jogos, reuniões ou trabalho.
+
+## ✨ Características
+
+- **Interface de Bandeja**: Fica discretamente na bandeja do sistema
+- **Alternação Rápida**: Troca entre monitores com apenas um clique
+- **Modos Predefinidos**: 
+  - Modo Reunião (Monitor 2)
+  - Modo Jogo (Monitor 1)
+- **Notificações**: Feedback visual quando o monitor é alterado
+- **Inicialização Automática**: Pode ser configurado para iniciar com o Windows
+- **Configuração Flexível**: Arquivo de configuração editável
+- **Ferramentas de Diagnóstico**: Listagem de monitores e teste de configuração
+
+## 🛠️ Requisitos
+
+- Windows 10 ou superior
+- Múltiplos monitores conectados
+- Node.js (para desenvolvimento)
+
+## 📦 Instalação
+
+### Usuário Final
+
+1. Baixe o instalador `.exe` da versão mais recente
+2. Execute o instalador e siga as instruções
+3. O aplicativo será iniciado automaticamente após a instalação
+
+### Desenvolvedor
+
+```bash
+# Clone o repositório
+git clone <url-do-repositorio>
+
+# Navegue até o diretório
+cd monitor-switcher
+
+# Instale as dependências
 npm install
-Configuração
-Arquivo display_config.txt
-Crie um arquivo display_config.txt com as configurações dos seus monitores:
 
+# Execute em modo de desenvolvimento
+npm start
+
+# Construa a aplicação
+npm run build
+```
+
+## 🔧 Configuração
+
+O arquivo `display_config.txt` permite configurar quais monitores serão usados:
+
+```ini
+# Configuração recomendada (usar números simples)
 DISPLAY1=1
 DISPLAY2=2
-Formato simples (recomendado):
 
-Use números simples: 1, 2, 3, etc.
-Corresponde à ordem dos monitores no sistema
-Formato alternativo (compatível):
+# Configuração alternativa (também funciona)
+# DISPLAY1=\\.\DISPLAY1
+# DISPLAY2=\\.\DISPLAY2
+```
 
-DISPLAY1=\\.\DISPLAY1
-DISPLAY2=\\.\DISPLAY2
-Para descobrir qual número usar:
+### Como descobrir o número do seu monitor:
 
-Teste manualmente no prompt de comando:
-cmd
-MultiMonitorTool.exe /SetPrimary 1
-MultiMonitorTool.exe /SetPrimary 2
-Ou execute o MultiMonitorTool.exe e veja a ordem dos monitores
-Arquivo de Ícone
-Coloque o arquivo monitorswitcher.ico na pasta raiz do projeto. Se não tiver o ícone, o aplicativo funcionará com um ícone padrão.
+1. Clique com o botão direito no ícone da bandeja
+2. Selecione "Listar Monitores"
+3. Ou use "Testar Configuração" para verificar se está funcionando
 
-Execução
-Modo Desenvolvimento
-bash
-npm start
-Compilação para Produção
-bash
-npm run build
-Isso criará um instalador na pasta dist/.
+## 🎮 Como Usar
 
-Estrutura de Arquivos
-monitor-switcher-electron/
-├── main.js                 # Processo principal do Electron
-├── preload.js              # Script de preload (opcional)
+### Menu da Bandeja
+
+- **Modo Reunião**: Define o Monitor 2 como principal
+- **Modo Jogo**: Define o Monitor 1 como principal
+- **Listar Monitores**: Mostra todos os monitores conectados
+- **Testar Configuração**: Verifica se tudo está funcionando
+- **Iniciar com Windows**: Ativa/desativa inicialização automática
+- **Sair**: Encerra a aplicação
+
+### Atalhos e Dicas
+
+- O aplicativo permanece na bandeja mesmo quando "fechado"
+- Notificações aparecem quando o monitor é alterado
+- Pode ser iniciado minimizado com o Windows
+- Apenas uma instância da aplicação roda por vez
+
+## 📁 Estrutura do Projeto
+
+```
+monitor-switcher/
+├── main.js                 # Arquivo principal da aplicação
 ├── package.json            # Configurações do projeto
+├── preload.js              # Script de preload (segurança)
 ├── display_config.txt      # Configuração dos monitores
-├── MultiMonitorTool.exe    # Ferramenta para alternar monitores
-├── monitorswitcher.ico     # Ícone do aplicativo
+├── monitorswitcher.ico     # Ícone da aplicação
+├── MultiMonitorTool.exe    # Ferramenta externa (NirSoft)
 └── README.md              # Este arquivo
-Uso
-Execute o aplicativo
-Procure o ícone na bandeja do sistema (próximo ao relógio)
-Clique com o botão direito no ícone para ver as opções:
-Modo Reunião: Para videoconferências
-Modo Jogo: Para jogos
-Sair: Para fechar o aplicativo
-Diferenças em Relação ao Windows Forms
-Vantagens do Electron:
-Multiplataforma: Pode ser adaptado para Linux e macOS
-Interface moderna: Possibilidade de criar UIs com HTML/CSS/JS
-Atualizações automáticas: Facilita distribuição de atualizações
-Comunidade ativa: Muitos recursos e plugins disponíveis
-Considerações:
-Tamanho: Aplicativo Electron é maior que Windows Forms
-Recursos: Consome mais memória que aplicativo nativo
-Compatibilidade: MultiMonitorTool.exe ainda é necessário no Windows
-Personalização
-Adicionando Novos Modos
-Para adicionar novos modos, edite o arquivo main.js na seção createTray():
+```
 
-javascript
-const contextMenu = Menu.buildFromTemplate([
-    {
-        label: 'Modo Reunião',
-        click: () => this.setPrimary(this.display2, 'Modo Reunião')
-    },
-    {
-        label: 'Modo Jogo',
-        click: () => this.setPrimary(this.display1, 'Modo Jogo')
-    },
-    // Adicione novos modos aqui
-    {
-        label: 'Modo Trabalho',
-        click: () => this.setPrimary(this.display1, 'Modo Trabalho')
-    },
-    { type: 'separator' },
-    {
-        label: 'Sair',
-        click: () => app.quit()
-    }
-]);
-Mudando Ícones
-Substitua o arquivo monitorswitcher.ico por um ícone de sua preferência.
+## 🔧 Desenvolvimento
 
-Solução de Problemas
-Aplicativo não inicia
-Verifique se o MultiMonitorTool.exe está na pasta
-Verifique se o display_config.txt existe e está configurado corretamente
-Monitores não alternam
-Confirme os IDs dos monitores no arquivo de configuração
-Execute o MultiMonitorTool.exe manualmente para testar
-Notificações não aparecem
-Verifique se as notificações estão habilitadas no Windows
-Algumas versões do Windows podem bloquear notificações
-Suporte
-Este é um projeto de exemplo. Para problemas específicos do MultiMonitorTool.exe, consulte a documentação oficial da ferramenta.
+### Scripts Disponíveis
+
+```bash
+npm start          # Inicia em modo desenvolvimento
+npm run build      # Constrói a aplicação
+npm run dist       # Cria distribuível
+npm run pack       # Empacota sem criar instalador
+```
+
+### Tecnologias Utilizadas
+
+- **Electron**: Framework para aplicações desktop
+- **Node.js**: Runtime JavaScript
+- **MultiMonitorTool**: Ferramenta da NirSoft para gerenciar monitores
+- **Electron Builder**: Para criar instaladores
+
+## 🐛 Solução de Problemas
+
+### Monitor não alterna
+
+1. Verifique se o `MultiMonitorTool.exe` está na pasta correta
+2. Use "Listar Monitores" para verificar os IDs corretos
+3. Edite o `display_config.txt` com os números corretos
+4. Use "Testar Configuração" para diagnosticar problemas
+
+### Ícone não aparece na bandeja
+
+1. Verifique se o arquivo `monitorswitcher.ico` existe
+2. Reinicie a aplicação
+3. Verifique se não há outra instância rodando
+
+### Notificações não aparecem
+
+1. Verifique as configurações de notificação do Windows
+2. Certifique-se de que o aplicativo tem permissão para notificações
+
+## 📄 Licença
+
+Este projeto está licenciado sob a MIT License - veja o arquivo LICENSE para detalhes.
+
+## 🙏 Créditos
+
+- **MultiMonitorTool**: Desenvolvido por NirSoft (https://www.nirsoft.net/)
+- **Electron**: Framework mantido pela OpenJS Foundation
+
+## 📞 Suporte
+
+Para problemas ou sugestões:
+
+1. Verifique a seção "Solução de Problemas" acima
+2. Use a funcionalidade "Testar Configuração" para diagnóstico
+3. Abra uma issue no repositório do projeto
+
+## 📈 Versões
+
+### v1.0.3
+- Interface de bandeja funcional
+- Alternação entre dois monitores
+- Notificações do sistema
+- Inicialização automática
+- Ferramentas de diagnóstico
+
+---
+
+**Desenvolvido por Alessandro Willian**
+
+> 💡 **Dica**: Para uma experiência otimizada, configure os monitores uma vez e deixe o aplicativo iniciando automaticamente com o Windows!

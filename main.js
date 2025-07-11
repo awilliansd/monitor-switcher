@@ -222,25 +222,23 @@ class MonitorSwitcherApp {
     }
 
     showBalloon(message) {
-        // No Electron, usamos a API de Notification
+        // Prioriza a notificação do sistema (mais moderna)
         if (Notification.isSupported()) {
             const notification = new Notification({
-                title: '',  // Título vazio para mostrar apenas o body
-                body: `Monitor Switcher: ${message}`,
+                title: 'Monitor Switcher',
+                body: message,
                 icon: this.iconPath,
                 silent: false
             });
 
             notification.show();
-            
-            // Alternativa: usar o tray para mostrar a notificação
-            if (this.tray) {
-                this.tray.displayBalloon({
-                    title: 'Monitor Switcher',
-                    content: message,
-                    icon: this.iconPath
-                });
-            }
+        } else if (this.tray) {
+            // Fallback para notificação do tray (Windows mais antigos)
+            this.tray.displayBalloon({
+                title: 'Monitor Switcher',
+                content: message,
+                icon: this.iconPath
+            });
         } else {
             console.log('Notificações não suportadas:', message);
         }

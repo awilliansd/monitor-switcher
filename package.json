@@ -1,6 +1,6 @@
 {
   "name": "monitor-switcher-electron",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Aplicativo de bandeja para alternar entre monitores usando MultiMonitorTool",
   "main": "main.js",
   "scripts": {
@@ -29,10 +29,21 @@
       "output": "dist"
     },
     "files": [
-      "main.js",
-      "display_config.txt",
-      "MultiMonitorTool.exe",
-      "monitorswitcher.ico"
+      "main.js"
+    ],
+    "extraResources": [
+      {
+        "from": "MultiMonitorTool.exe",
+        "to": "MultiMonitorTool.exe"
+      },
+      {
+        "from": "display_config.txt",
+        "to": "display_config.txt"
+      },
+      {
+        "from": "monitorswitcher.ico",
+        "to": "monitorswitcher.ico"
+      }
     ],
     "win": {
       "target": "nsis",

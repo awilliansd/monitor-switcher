@@ -5,24 +5,45 @@ const path = require('path');
 
 class MonitorSwitcherApp {
     constructor() {
-        this.tool = 'MultiMonitorTool.exe';
-        this.configFile = 'display_config.txt';
+        // Detecta se está em desenvolvimento ou produção
+        this.isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+        
+        // Define os caminhos dos arquivos
+        this.tool = this.getResourcePath('MultiMonitorTool.exe');
+        this.configFile = this.getResourcePath('display_config.txt');
+        this.iconPath = this.getResourcePath('monitorswitcher.ico');
+        
         this.display1 = '';
         this.display2 = '';
         this.tray = null;
         this.mainWindow = null;
     }
 
+    getResourcePath(fileName) {
+        if (this.isDev) {
+            // Em desenvolvimento, os arquivos estão na pasta do projeto
+            return path.join(__dirname, fileName);
+        } else {
+            // Em produção, os arquivos estão em process.resourcesPath
+            return path.join(process.resourcesPath, fileName);
+        }
+    }
+
     async init() {
+        console.log('Iniciando aplicação...');
+        console.log(`Modo: ${this.isDev ? 'Desenvolvimento' : 'Produção'}`);
+        console.log(`Caminho do tool: ${this.tool}`);
+        console.log(`Caminho do config: ${this.configFile}`);
+        
         // Verifica se os arquivos necessários existem
         if (!fs.existsSync(this.tool)) {
-            await this.showError(`Arquivo '${this.tool}' não encontrado.`);
+            await this.showError(`Arquivo '${path.basename(this.tool)}' não encontrado em:\n${this.tool}`);
             app.quit();
             return;
         }
 
         if (!fs.existsSync(this.configFile)) {
-            await this.showError(`Arquivo '${this.configFile}' não encontrado.`);
+            await this.showError(`Arquivo '${path.basename(this.configFile)}' não encontrado em:\n${this.configFile}`);
             app.quit();
             return;
         }
@@ -44,6 +65,8 @@ class MonitorSwitcherApp {
                     this.display2 = trimmedLine.substring('DISPLAY2='.length).trim();
                 }
             });
+            
+            console.log(`Configuração carregada - DISPLAY1: ${this.display1}, DISPLAY2: ${this.display2}`);
         } catch (error) {
             console.error('Erro ao carregar configuração:', error);
         }
@@ -51,12 +74,12 @@ class MonitorSwitcherApp {
 
     createTray() {
         // Cria o ícone da bandeja
-        const iconPath = path.join(__dirname, 'monitorswitcher.ico');
         let trayIcon;
         
-        if (fs.existsSync(iconPath)) {
-            trayIcon = nativeImage.createFromPath(iconPath);
+        if (fs.existsSync(this.iconPath)) {
+            trayIcon = nativeImage.createFromPath(this.iconPath);
         } else {
+            console.log(`Ícone não encontrado em: ${this.iconPath}`);
             // Fallback para um ícone padrão se não encontrar o arquivo
             trayIcon = nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
         }
@@ -73,6 +96,15 @@ class MonitorSwitcherApp {
             {
                 label: 'Modo Jogo',
                 click: () => this.setPrimary(this.display1, 'Modo Jogo')
+            },
+            { type: 'separator' },
+            {
+                label: 'Listar Monitores',
+                click: () => this.listMonitors()
+            },
+            {
+                label: 'Testar Configuração',
+                click: () => this.testConfiguration()
             },
             { type: 'separator' },
             {
@@ -160,7 +192,7 @@ class MonitorSwitcherApp {
             const notification = new Notification({
                 title: 'Monitor Switcher',
                 body: message,
-                icon: path.join(__dirname, 'monitorswitcher.ico'),
+                icon: this.iconPath,
                 silent: false
             });
 
@@ -171,7 +203,12 @@ class MonitorSwitcherApp {
     }
 
     listMonitors() {
-        const process = spawn(this.tool, ['/scomma', 'monitors_temp.csv'], {
+        // Define o caminho para o arquivo CSV temporário
+        const csvPath = this.isDev ? 
+            path.join(__dirname, 'monitors_temp.csv') :
+            path.join(process.resourcesPath, 'monitors_temp.csv');
+
+        const process = spawn(this.tool, ['/scomma', csvPath], {
             stdio: ['ignore', 'pipe', 'pipe'],
             detached: false,
             windowsHide: true
@@ -193,8 +230,8 @@ class MonitorSwitcherApp {
                 // Lê o arquivo CSV gerado
                 setTimeout(() => {
                     try {
-                        if (fs.existsSync('monitors_temp.csv')) {
-                            const csvData = fs.readFileSync('monitors_temp.csv', 'utf8');
+                        if (fs.existsSync(csvPath)) {
+                            const csvData = fs.readFileSync(csvPath, 'utf8');
                             const lines = csvData.split('\n');
                             
                             let monitorInfo = 'Monitores encontrados:\n\n';
@@ -224,7 +261,7 @@ class MonitorSwitcherApp {
                             this.showInfo('Lista de Monitores', monitorInfo);
                             
                             // Remove o arquivo temporário
-                            fs.unlinkSync('monitors_temp.csv');
+                            fs.unlinkSync(csvPath);
                         }
                     } catch (error) {
                         console.error('Erro ao ler lista de monitores:', error);
@@ -243,11 +280,16 @@ class MonitorSwitcherApp {
         // Verifica se os arquivos existem
         testResult += `✓ MultiMonitorTool.exe: ${fs.existsSync(this.tool) ? 'Encontrado' : 'NÃO ENCONTRADO'}\n`;
         testResult += `✓ display_config.txt: ${fs.existsSync(this.configFile) ? 'Encontrado' : 'NÃO ENCONTRADO'}\n`;
+        testResult += `✓ monitorswitcher.ico: ${fs.existsSync(this.iconPath) ? 'Encontrado' : 'NÃO ENCONTRADO'}\n`;
         
         // Verifica configuração
         testResult += `\nConfigurações carregadas:\n`;
         testResult += `DISPLAY1: ${this.display1 || 'NÃO CONFIGURADO'}\n`;
         testResult += `DISPLAY2: ${this.display2 || 'NÃO CONFIGURADO'}\n`;
+        
+        // Verifica modo
+        testResult += `\nModo: ${this.isDev ? 'Desenvolvimento' : 'Produção'}\n`;
+        testResult += `Caminho do tool: ${this.tool}\n`;
         
         // Testa comando básico
         testResult += `\nTestando comando básico...\n`;
@@ -278,6 +320,17 @@ class MonitorSwitcherApp {
         const options = {
             type: 'error',
             title: 'Erro',
+            message: message,
+            buttons: ['OK']
+        };
+
+        await dialog.showMessageBox(options);
+    }
+
+    async showInfo(title, message) {
+        const options = {
+            type: 'info',
+            title: title,
             message: message,
             buttons: ['OK']
         };

@@ -35,6 +35,11 @@ class MonitorSwitcherApp {
         console.log(`Caminho do tool: ${this.tool}`);
         console.log(`Caminho do config: ${this.configFile}`);
         
+        // Configura o nome da aplicação para notificações no Windows
+        if (process.platform === 'win32') {
+            app.setAppUserModelId('com.private.monitorswitcher');
+        }
+        
         // Verifica se os arquivos necessários existem
         if (!fs.existsSync(this.tool)) {
             await this.showError(`Arquivo '${path.basename(this.tool)}' não encontrado em:\n${this.tool}`);
@@ -190,13 +195,22 @@ class MonitorSwitcherApp {
         // No Electron, usamos a API de Notification
         if (Notification.isSupported()) {
             const notification = new Notification({
-                title: 'Monitor Switcher',
-                body: message,
+                title: '',  // Título vazio para mostrar apenas o body
+                body: `Monitor Switcher: ${message}`,
                 icon: this.iconPath,
                 silent: false
             });
 
             notification.show();
+            
+            // Alternativa: usar o tray para mostrar a notificação
+            if (this.tray) {
+                this.tray.displayBalloon({
+                    title: 'Monitor Switcher',
+                    content: message,
+                    icon: this.iconPath
+                });
+            }
         } else {
             console.log('Notificações não suportadas:', message);
         }

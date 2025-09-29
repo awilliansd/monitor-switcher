@@ -232,10 +232,10 @@ class MonitorSwitcherApp {
             this.initializePaths();
         }
         
-        // Define o caminho para o arquivo CSV temporário
-        const csvPath = this.isDev ? 
-            path.join(__dirname, 'monitors_temp.csv') :
-            path.join(process.resourcesPath, 'monitors_temp.csv');
+        // Define o caminho para o arquivo CSV temporário na pasta TEMP do usuário
+        // Isso evita problemas de permissão em Program Files
+        const tempDir = app.getPath('temp');
+        const csvPath = path.join(tempDir, 'monitorswitcher_temp.csv');
 
         console.log(`Executando comando de listagem: ${this.tool} /scomma "${csvPath}"`);
 

@@ -5,6 +5,20 @@ const path = require('path');
 
 class MonitorSwitcherApp {
     constructor() {
+        this.isDev = null;
+        this.tool = null;
+        this.configFile = null;
+        this.iconPath = null;
+        this.display1 = '';
+        this.display2 = '';
+        this.tray = null;
+        this.mainWindow = null;
+        this.isInitialized = false;
+    }
+
+    initializePaths() {
+        if (this.isInitialized) return;
+        
         // Detecta se está em desenvolvimento ou produção
         this.isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
         
@@ -13,10 +27,12 @@ class MonitorSwitcherApp {
         this.configFile = this.getResourcePath('display_config.txt');
         this.iconPath = this.getResourcePath('monitorswitcher.ico');
         
-        this.display1 = '';
-        this.display2 = '';
-        this.tray = null;
-        this.mainWindow = null;
+        this.isInitialized = true;
+        
+        console.log('Caminhos inicializados:');
+        console.log(`Modo: ${this.isDev ? 'Desenvolvimento' : 'Produção'}`);
+        console.log(`Caminho do tool: ${this.tool}`);
+        console.log(`Caminho do config: ${this.configFile}`);
     }
 
     getResourcePath(fileName) {
@@ -31,9 +47,9 @@ class MonitorSwitcherApp {
 
     async init() {
         console.log('Iniciando aplicação...');
-        console.log(`Modo: ${this.isDev ? 'Desenvolvimento' : 'Produção'}`);
-        console.log(`Caminho do tool: ${this.tool}`);
-        console.log(`Caminho do config: ${this.configFile}`);
+        
+        // Inicializa os caminhos primeiro
+        this.initializePaths();
         
         // Configura o nome da aplicação para notificações no Windows
         if (process.platform === 'win32') {
@@ -49,13 +65,13 @@ class MonitorSwitcherApp {
         
         // Verifica se os arquivos necessários existem
         if (!fs.existsSync(this.tool)) {
-            this.showError(`Arquivo '${path.basename(this.tool)}' não encontrado em:\n${this.tool}`);
+            await this.showError(`Arquivo '${path.basename(this.tool)}' não encontrado em:\n${this.tool}`);
             setTimeout(() => app.quit(), 3000);
             return;
         }
 
         if (!fs.existsSync(this.configFile)) {
-            this.showError(`Arquivo '${path.basename(this.configFile)}' não encontrado em:\n${this.configFile}`);
+            await this.showError(`Arquivo '${path.basename(this.configFile)}' não encontrado em:\n${this.configFile}`);
             setTimeout(() => app.quit(), 3000);
             return;
         }
@@ -105,41 +121,7 @@ class MonitorSwitcherApp {
         this.tray.setToolTip('Monitor Switcher');
 
         // Cria o menu de contexto
-        const contextMenu = Menu.buildFromTemplate([
-            {
-                label: 'Modo Reunião',
-                click: () => this.setPrimary(this.display2, 'Modo Reunião')
-            },
-            {
-                label: 'Modo Jogo',
-                click: () => this.setPrimary(this.display1, 'Modo Jogo')
-            },
-            { type: 'separator' },
-            {
-                label: 'Listar Monitores',
-                click: () => this.listMonitors()
-            },
-            {
-                label: 'Testar Configuração',
-                click: () => this.testConfiguration()
-            },
-            { type: 'separator' },
-            {
-                label: 'Iniciar com Windows',
-                type: 'checkbox',
-                checked: app.getLoginItemSettings().openAtLogin,
-                click: () => this.toggleAutoStart()
-            },
-            { type: 'separator' },
-            {
-                label: 'Sair',
-                click: () => {
-                    app.quit();
-                }
-            }
-        ]);
-
-        this.tray.setContextMenu(contextMenu);
+        this.updateTrayMenu();
     }
 
     async showError(message) {
@@ -150,7 +132,7 @@ class MonitorSwitcherApp {
             buttons: ['OK']
         };
 
-        await dialog.showMessageBox(options);
+        return await dialog.showMessageBox(options);
     }
 
     setPrimary(displayId, modeName) {
@@ -245,12 +227,19 @@ class MonitorSwitcherApp {
     }
 
     listMonitors() {
+        // Garante que os caminhos estão inicializados
+        if (!this.isInitialized) {
+            this.initializePaths();
+        }
+        
         // Define o caminho para o arquivo CSV temporário
         const csvPath = this.isDev ? 
             path.join(__dirname, 'monitors_temp.csv') :
             path.join(process.resourcesPath, 'monitors_temp.csv');
 
-        const process = spawn(this.tool, ['/scomma', csvPath], {
+        console.log(`Executando comando de listagem: ${this.tool} /scomma "${csvPath}"`);
+
+        const childProcess = spawn(this.tool, ['/scomma', csvPath], {
             stdio: ['ignore', 'pipe', 'pipe'],
             detached: false,
             windowsHide: true
@@ -259,64 +248,91 @@ class MonitorSwitcherApp {
         let stdout = '';
         let stderr = '';
 
-        process.stdout.on('data', (data) => {
+        childProcess.stdout.on('data', (data) => {
             stdout += data.toString();
         });
 
-        process.stderr.on('data', (data) => {
+        childProcess.stderr.on('data', (data) => {
             stderr += data.toString();
         });
 
-        process.on('close', (code) => {
+        childProcess.on('close', (code) => {
+            console.log(`Comando de listagem terminou com código: ${code}`);
+            if (stdout) console.log(`stdout: ${stdout}`);
+            if (stderr) console.log(`stderr: ${stderr}`);
+            
             if (code === 0) {
-                // Lê o arquivo CSV gerado
+                // Aguarda um pouco para garantir que o arquivo foi escrito
                 setTimeout(() => {
-                    try {
-                        if (fs.existsSync(csvPath)) {
-                            const csvData = fs.readFileSync(csvPath, 'utf8');
-                            const lines = csvData.split('\n');
-                            
-                            let monitorInfo = 'Monitores encontrados:\n\n';
-                            
-                            lines.forEach((line, index) => {
-                                if (index === 0) return; // Pula o cabeçalho
-                                if (line.trim() === '') return; // Pula linhas vazias
-                                
-                                const fields = line.split(',');
-                                if (fields.length > 0) {
-                                    const name = fields[0] ? fields[0].replace(/"/g, '') : '';
-                                    const description = fields[1] ? fields[1].replace(/"/g, '') : '';
-                                    const active = fields[2] ? fields[2].replace(/"/g, '') : '';
-                                    const primary = fields[3] ? fields[3].replace(/"/g, '') : '';
-                                    
-                                    monitorInfo += `Nome: ${name}\n`;
-                                    monitorInfo += `Descrição: ${description}\n`;
-                                    monitorInfo += `Ativo: ${active}\n`;
-                                    monitorInfo += `Principal: ${primary}\n\n`;
-                                }
-                            });
-                            
-                            monitorInfo += `\nConfiguração atual:\n`;
-                            monitorInfo += `DISPLAY1=${this.display1}\n`;
-                            monitorInfo += `DISPLAY2=${this.display2}`;
-                            
-                            this.showInfo('Lista de Monitores', monitorInfo);
-                            
-                            // Remove o arquivo temporário
-                            fs.unlinkSync(csvPath);
-                        }
-                    } catch (error) {
-                        console.error('Erro ao ler lista de monitores:', error);
-                        this.showError('Erro ao listar monitores: ' + error.message);
-                    }
-                }, 1000);
+                    this.processMonitorList(csvPath);
+                }, 1500);
             } else {
                 this.showError(`Erro ao listar monitores (código ${code}):\n${stderr || 'Erro desconhecido'}`);
             }
         });
+
+        childProcess.on('error', (error) => {
+            console.error('Erro ao executar comando de listagem:', error);
+            this.showError(`Erro ao executar comando de listagem:\n${error.message}`);
+        });
+    }
+
+    processMonitorList(csvPath) {
+        try {
+            if (fs.existsSync(csvPath)) {
+                const csvData = fs.readFileSync(csvPath, 'utf8');
+                console.log('Dados CSV lidos:', csvData);
+                
+                const lines = csvData.split('\n');
+                
+                let monitorInfo = 'Monitores encontrados:\n\n';
+                
+                lines.forEach((line, index) => {
+                    if (index === 0) return; // Pula o cabeçalho
+                    if (line.trim() === '') return; // Pula linhas vazias
+                    
+                    const fields = line.split(',');
+                    if (fields.length > 3) {
+                        const name = fields[0] ? fields[0].replace(/"/g, '') : '';
+                        const description = fields[1] ? fields[1].replace(/"/g, '') : '';
+                        const active = fields[2] ? fields[2].replace(/"/g, '') : '';
+                        const primary = fields[3] ? fields[3].replace(/"/g, '') : '';
+                        
+                        monitorInfo += `Monitor ${index}:\n`;
+                        monitorInfo += `  Nome: ${name}\n`;
+                        monitorInfo += `  Descrição: ${description}\n`;
+                        monitorInfo += `  Ativo: ${active}\n`;
+                        monitorInfo += `  Principal: ${primary}\n\n`;
+                    }
+                });
+                
+                monitorInfo += `\nConfiguração atual:\n`;
+                monitorInfo += `DISPLAY1=${this.display1}\n`;
+                monitorInfo += `DISPLAY2=${this.display2}`;
+                
+                this.showInfo('Lista de Monitores', monitorInfo);
+                
+                // Remove o arquivo temporário
+                try {
+                    fs.unlinkSync(csvPath);
+                } catch (deleteError) {
+                    console.log('Erro ao deletar arquivo temporário:', deleteError);
+                }
+            } else {
+                this.showError('Arquivo CSV temporário não foi criado. Verifique se o MultiMonitorTool.exe tem permissões de escrita.');
+            }
+        } catch (error) {
+            console.error('Erro ao processar lista de monitores:', error);
+            this.showError('Erro ao processar lista de monitores: ' + error.message);
+        }
     }
 
     testConfiguration() {
+        // Garante que os caminhos estão inicializados
+        if (!this.isInitialized) {
+            this.initializePaths();
+        }
+        
         let testResult = 'Teste de Configuração:\n\n';
         
         // Verifica se os arquivos existem
@@ -336,13 +352,13 @@ class MonitorSwitcherApp {
         // Testa comando básico
         testResult += `\nTestando comando básico...\n`;
         
-        const process = spawn(this.tool, ['/help'], {
+        const testProcess = spawn(this.tool, ['/help'], {
             stdio: ['ignore', 'pipe', 'pipe'],
             detached: false,
             windowsHide: true
         });
 
-        process.on('close', (code) => {
+        testProcess.on('close', (code) => {
             if (code === 0) {
                 testResult += `✓ MultiMonitorTool.exe responde corretamente\n`;
             } else {
@@ -352,7 +368,7 @@ class MonitorSwitcherApp {
             this.showInfo('Teste de Configuração', testResult);
         });
 
-        process.on('error', (error) => {
+        testProcess.on('error', (error) => {
             testResult += `✗ Erro ao executar MultiMonitorTool.exe: ${error.message}\n`;
             this.showInfo('Teste de Configuração', testResult);
         });
@@ -378,15 +394,17 @@ class MonitorSwitcherApp {
     }
 
     updateTrayMenu() {
+        if (!this.tray) return;
+        
         // Recria o menu com o estado atualizado
         const contextMenu = Menu.buildFromTemplate([
             {
                 label: 'Modo Reunião',
-                click: () => this.setPrimary(this.display2, 'Modo Reunião')
+                click: () => this.setPrimary(this.display1, 'Modo Reunião')
             },
             {
                 label: 'Modo Jogo',
-                click: () => this.setPrimary(this.display1, 'Modo Jogo')
+                click: () => this.setPrimary(this.display2, 'Modo Jogo')
             },
             { type: 'separator' },
             {
@@ -424,16 +442,19 @@ class MonitorSwitcherApp {
             buttons: ['OK']
         };
 
-        await dialog.showMessageBox(options);
+        return await dialog.showMessageBox(options);
     }
 }
 
 // Instância da aplicação
-const monitorSwitcher = new MonitorSwitcherApp();
+let monitorSwitcher = null;
 
 // Configuração do Electron
 app.whenReady().then(() => {
-    monitorSwitcher.init();
+    monitorSwitcher = new MonitorSwitcherApp();
+    monitorSwitcher.init().catch(error => {
+        console.error('Erro durante inicialização:', error);
+    });
 });
 
 app.on('window-all-closed', () => {
@@ -453,7 +474,7 @@ app.on('activate', () => {
 
 // Previne que a aplicação saia quando todas as janelas são fechadas
 app.on('before-quit', (event) => {
-    if (monitorSwitcher.tray) {
+    if (monitorSwitcher && monitorSwitcher.tray) {
         monitorSwitcher.tray.destroy();
     }
 });

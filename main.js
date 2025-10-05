@@ -89,7 +89,8 @@ class MonitorSwitcherApp {
         try {
             const data = fs.readFileSync(this.configFile, 'utf8');
             const lines = data.split('\n');
-            
+            this.display1 = '';
+            this.display2 = '';
             lines.forEach(line => {
                 const trimmedLine = line.trim();
                 if (trimmedLine.startsWith('DISPLAY1=')) {
@@ -98,11 +99,47 @@ class MonitorSwitcherApp {
                     this.display2 = trimmedLine.substring('DISPLAY2='.length).trim();
                 }
             });
-            
             console.log(`Configuração carregada - DISPLAY1: ${this.display1}, DISPLAY2: ${this.display2}`);
         } catch (error) {
             console.error('Erro ao carregar configuração:', error);
         }
+    }
+
+    /**
+     * Busca o número do monitor (1, 2, ...) pelo identificador único salvo na config.
+     * Assim, mesmo que a ordem mude, sempre ativa o monitor correto.
+     */
+    async getMonitorNumberById(uniqueId) {
+        // Gera o CSV temporário
+        const tempDir = app.getPath('temp');
+        const csvPath = path.join(tempDir, 'monitorswitcher_temp.csv');
+        await new Promise((resolve, reject) => {
+            const proc = spawn(this.tool, ['/scomma', csvPath], {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                detached: false,
+                windowsHide: true
+            });
+            proc.on('close', () => resolve());
+            proc.on('error', reject);
+        });
+        if (!fs.existsSync(csvPath)) return null;
+        const csvData = fs.readFileSync(csvPath, 'utf8');
+        const lines = csvData.split('\n');
+        let found = null;
+        lines.forEach((line, idx) => {
+            if (idx === 0 || line.trim() === '') return;
+            const fields = line.split(',').map(f => f.replace(/"/g, '').trim());
+            // Device Name, Description, Active, Primary, ...
+            const deviceName = fields[0] || '';
+            const description = fields[1] || '';
+            // O identificador pode ser deviceName ou description
+            if (uniqueId === deviceName || uniqueId === description) {
+                // O número do monitor é o índice+1 (padrão do MultiMonitorTool)
+                found = (idx).toString();
+            }
+        });
+        try { fs.unlinkSync(csvPath); } catch {}
+        return found;
     }
 
     createTray() {
@@ -135,32 +172,23 @@ class MonitorSwitcherApp {
         return await dialog.showMessageBox(options);
     }
 
-    setPrimary(displayId, modeName) {
+    async setPrimary(displayId, modeName) {
         if (!displayId || displayId.trim() === '') {
             console.log('Display ID vazio');
             this.showError('Display ID não configurado corretamente');
             return;
         }
 
-        console.log(`Tentando definir monitor principal: ${displayId}`);
-        console.log(`Modo: ${modeName}`);
-
-        // Converte os nomes de display para números
-        let displayNumber = '';
-        
-        if (displayId.includes('DISPLAY1') || displayId === '1') {
-            displayNumber = '1';
-        } else if (displayId.includes('DISPLAY2') || displayId === '2') {
-            displayNumber = '2';
-        } else {
-            // Se não for um formato reconhecido, tenta usar como está
-            displayNumber = displayId;
+        // Busca o número do monitor pelo identificador único
+        const displayNumber = await this.getMonitorNumberById(displayId);
+        if (!displayNumber) {
+            this.showError('Não foi possível localizar o monitor correspondente ao identificador salvo.');
+            return;
         }
-        
+
         const args = ['/SetPrimary', displayNumber];
-        
-        console.log(`Comando: ${this.tool} ${args.join(' ')}`);
-        
+        console.log(`Comando: ${this.tool} ${args.join(' ')} (modo: ${modeName})`);
+
         try {
             const process = spawn(this.tool, args, {
                 stdio: ['ignore', 'pipe', 'pipe'],
@@ -184,7 +212,6 @@ class MonitorSwitcherApp {
                 console.log(`Processo terminou com código: ${code}`);
                 if (stdout) console.log(`stdout: ${stdout}`);
                 if (stderr) console.log(`stderr: ${stderr}`);
-                
                 if (code === 0) {
                     this.showBalloon(`Alterado para ${modeName}.`);
                 } else {

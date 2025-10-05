@@ -4,6 +4,14 @@ const fs = require('fs');
 const path = require('path');
 
 class MonitorSwitcherApp {
+    openConfigFile() {
+        const { shell } = require('electron');
+        if (fs.existsSync(this.configFile)) {
+            shell.openPath(this.configFile);
+        } else {
+            this.showError('Arquivo de configuração não encontrado.');
+        }
+    }
     constructor() {
         this.isDev = null;
         this.tool = null;
@@ -89,7 +97,8 @@ class MonitorSwitcherApp {
         try {
             const data = fs.readFileSync(this.configFile, 'utf8');
             const lines = data.split('\n');
-            
+            this.display1 = '';
+            this.display2 = '';
             lines.forEach(line => {
                 const trimmedLine = line.trim();
                 if (trimmedLine.startsWith('DISPLAY1=')) {
@@ -98,11 +107,84 @@ class MonitorSwitcherApp {
                     this.display2 = trimmedLine.substring('DISPLAY2='.length).trim();
                 }
             });
-            
             console.log(`Configuração carregada - DISPLAY1: ${this.display1}, DISPLAY2: ${this.display2}`);
         } catch (error) {
             console.error('Erro ao carregar configuração:', error);
         }
+    }
+
+    /**
+     * Busca o número do monitor (1, 2, ...) pelo identificador único salvo na config.
+     * Prioriza o campo 'Short Monitor ID' do CSV do MultiMonitorTool.
+     */
+    async getMonitorNumberById(uniqueId) {
+        const tempDir = app.getPath('temp');
+        const csvPath = path.join(tempDir, 'monitorswitcher_temp.csv');
+        await new Promise((resolve, reject) => {
+            const proc = spawn(this.tool, ['/scomma', csvPath], {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                detached: false,
+                windowsHide: true
+            });
+            proc.on('close', () => resolve());
+            proc.on('error', reject);
+        });
+        if (!fs.existsSync(csvPath)) return null;
+        const csvData = fs.readFileSync(csvPath, 'utf8');
+        const lines = csvData.split('\n');
+        let found = null;
+        let header = [];
+        const allIds = [];
+        // Função para normalizar barras invertidas
+        function normalizeSlashes(str) {
+            return (str || '').replace(/\\+/g, '\\');
+        }
+        // Função para dividir CSV respeitando aspas
+        function parseCsvLine(line) {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    result.push(current);
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current);
+            return result;
+        }
+        const normUniqueId = normalizeSlashes(uniqueId);
+        lines.forEach((line, idx) => {
+            if (line.trim() === '') return;
+            const fields = parseCsvLine(line).map(f => f.replace(/"/g, '').trim());
+            if (idx === 0) {
+                header = fields;
+                return;
+            }
+            const shortIdIdx = header.findIndex(h => h.toLowerCase() === 'short monitor id');
+            const deviceNameIdx = header.findIndex(h => h.toLowerCase() === 'device name');
+            const descriptionIdx = header.findIndex(h => h.toLowerCase() === 'description');
+            const shortId = shortIdIdx !== -1 ? fields[shortIdIdx] : '';
+            const deviceName = deviceNameIdx !== -1 ? fields[deviceNameIdx] : '';
+            const description = descriptionIdx !== -1 ? fields[descriptionIdx] : '';
+            allIds.push({ shortId, deviceName, description });
+            let match = false;
+            if (shortId && normUniqueId === normalizeSlashes(shortId)) match = true;
+            if (!match && deviceName && normUniqueId === normalizeSlashes(deviceName)) match = true;
+            if (!match && description && normUniqueId === normalizeSlashes(description)) match = true;
+            if (match) {
+                found = (idx).toString();
+            }
+        });
+        console.log('Identificadores encontrados no CSV:', allIds);
+        console.log('Procurando por:', uniqueId);
+        try { fs.unlinkSync(csvPath); } catch {}
+        return found;
     }
 
     createTray() {
@@ -135,32 +217,23 @@ class MonitorSwitcherApp {
         return await dialog.showMessageBox(options);
     }
 
-    setPrimary(displayId, modeName) {
+    async setPrimary(displayId, modeName) {
         if (!displayId || displayId.trim() === '') {
             console.log('Display ID vazio');
             this.showError('Display ID não configurado corretamente');
             return;
         }
 
-        console.log(`Tentando definir monitor principal: ${displayId}`);
-        console.log(`Modo: ${modeName}`);
-
-        // Converte os nomes de display para números
-        let displayNumber = '';
-        
-        if (displayId.includes('DISPLAY1') || displayId === '1') {
-            displayNumber = '1';
-        } else if (displayId.includes('DISPLAY2') || displayId === '2') {
-            displayNumber = '2';
-        } else {
-            // Se não for um formato reconhecido, tenta usar como está
-            displayNumber = displayId;
+        // Busca o número do monitor pelo identificador único
+        const displayNumber = await this.getMonitorNumberById(displayId);
+        if (!displayNumber) {
+            this.showError('Não foi possível localizar o monitor correspondente ao identificador salvo.');
+            return;
         }
-        
+
         const args = ['/SetPrimary', displayNumber];
-        
-        console.log(`Comando: ${this.tool} ${args.join(' ')}`);
-        
+        console.log(`Comando: ${this.tool} ${args.join(' ')} (modo: ${modeName})`);
+
         try {
             const process = spawn(this.tool, args, {
                 stdio: ['ignore', 'pipe', 'pipe'],
@@ -184,7 +257,6 @@ class MonitorSwitcherApp {
                 console.log(`Processo terminou com código: ${code}`);
                 if (stdout) console.log(`stdout: ${stdout}`);
                 if (stderr) console.log(`stderr: ${stderr}`);
-                
                 if (code === 0) {
                     this.showBalloon(`Alterado para ${modeName}.`);
                 } else {
@@ -407,6 +479,10 @@ class MonitorSwitcherApp {
                 click: () => this.setPrimary(this.display2, 'Modo Jogo')
             },
             { type: 'separator' },
+            {
+                label: 'Editar Configuração',
+                click: () => this.openConfigFile()
+            },
             {
                 label: 'Listar Monitores',
                 click: () => this.listMonitors()

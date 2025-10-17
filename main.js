@@ -187,6 +187,62 @@ class MonitorSwitcherApp {
         return found;
     }
 
+    /**
+     * Obtém o número do monitor principal atual a partir do CSV gerado pelo MultiMonitorTool.
+     */
+    async getCurrentPrimaryNumber() {
+        const tempDir = app.getPath('temp');
+        const csvPath = path.join(tempDir, 'monitorswitcher_temp.csv');
+        await new Promise((resolve, reject) => {
+            const proc = spawn(this.tool, ['/scomma', csvPath], {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                detached: false,
+                windowsHide: true
+            });
+            proc.on('close', () => resolve());
+            proc.on('error', reject);
+        });
+        if (!fs.existsSync(csvPath)) return null;
+        const csvData = fs.readFileSync(csvPath, 'utf8');
+        const lines = csvData.split('\n');
+        let found = null;
+        let header = [];
+        // Função para dividir CSV respeitando aspas
+        function parseCsvLine(line) {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    result.push(current);
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current);
+            return result;
+        }
+        lines.forEach((line, idx) => {
+            if (line.trim() === '') return;
+            const fields = parseCsvLine(line).map(f => f.replace(/"/g, '').trim());
+            if (idx === 0) {
+                header = fields;
+                return;
+            }
+            const primaryIdx = header.findIndex(h => h.toLowerCase() === 'primary');
+            const primary = primaryIdx !== -1 ? fields[primaryIdx] : '';
+            if (primary.toLowerCase() === 'yes') {
+                found = (idx).toString();
+            }
+        });
+        try { fs.unlinkSync(csvPath); } catch {}
+        return found;
+    }
+
     createTray() {
         // Cria o ícone da bandeja
         let trayIcon;
@@ -465,18 +521,46 @@ class MonitorSwitcherApp {
         this.showBalloon(`Inicialização automática ${status}`);
     }
 
+    async togglePrimary() {
+        if (!this.display1 || !this.display2) {
+            this.showError('Configuração de displays não carregada corretamente.');
+            return;
+        }
+
+        const num1 = await this.getMonitorNumberById(this.display1);
+        const num2 = await this.getMonitorNumberById(this.display2);
+        const currentPrimary = await this.getCurrentPrimaryNumber();
+
+        if (!num1 || !num2 || !currentPrimary) {
+            this.showError('Não foi possível detectar os monitores ou o principal atual.');
+            return;
+        }
+
+        let targetDisplayId;
+        let modeName;
+
+        if (currentPrimary === num1) {
+            targetDisplayId = this.display2;
+            modeName = 'Modo Jogo';
+        } else if (currentPrimary === num2) {
+            targetDisplayId = this.display1;
+            modeName = 'Modo Reunião';
+        } else {
+            this.showError('O monitor principal atual não corresponde a nenhum dos configurados.');
+            return;
+        }
+
+        await this.setPrimary(targetDisplayId, modeName);
+    }
+
     updateTrayMenu() {
         if (!this.tray) return;
         
         // Recria o menu com o estado atualizado
         const contextMenu = Menu.buildFromTemplate([
             {
-                label: 'Modo Reunião',
-                click: () => this.setPrimary(this.display1, 'Modo Reunião')
-            },
-            {
-                label: 'Modo Jogo',
-                click: () => this.setPrimary(this.display2, 'Modo Jogo')
+                label: 'Alternar Monitor Principal',
+                click: () => this.togglePrimary()
             },
             { type: 'separator' },
             {

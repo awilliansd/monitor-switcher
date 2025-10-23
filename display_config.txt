@@ -1,12 +1,11 @@
-## Configuração dos monitores usando Short Monitor ID
-# Use exatamente o valor do campo 'Short Monitor ID' do MultiMonitorTool
-DISPLAY1=DELA114
-DISPLAY2=DHIFFFF
-# DISPLAY2=\\.\DISPLAY2
+## Configuração dos monitores usando um identificador estável
+# Prioridade: 1. Monitor Serial Number, 2. Monitor ID
+# Use o valor do campo 'Monitor Serial Number' se ele for único e não for '00000...'.
+# Se não, use o valor completo do campo 'Monitor ID'.
 
-# Para verificar qual monitor é qual:
-# 1. Execute o MultiMonitorTool.exe diretamente
-# 2. Ou use os comandos:
-#    MultiMonitorTool.exe /SetPrimary 1
-#    MultiMonitorTool.exe /SetPrimary 2
-# 3. Veja qual monitor fica como principal
+DISPLAY1=6KL82W2
+DISPLAY2=MONITOR\DHIFFFF\{4d36e96e-e325-11ce-bfc1-08002be10318}\0004
+
+# Para encontrar os valores corretos:
+# 1. Execute o comando: MultiMonitorTool.exe /scomma monitors.csv
+# 2. Abra o arquivo monitors.csv e procure pelos campos 'Monitor Serial Number' e 'Monitor ID'.

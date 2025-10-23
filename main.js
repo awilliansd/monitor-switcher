@@ -233,33 +233,39 @@ class MonitorSwitcherApp {
     }
 }
 
-let monitorSwitcher = null;
+// Exporta a classe para permitir testes
+module.exports = MonitorSwitcherApp;
 
-app.whenReady().then(() => {
-    monitorSwitcher = new MonitorSwitcherApp();
-    monitorSwitcher.init().catch(error => {
-        console.error('Erro durante inicialização:', error);
+// Garante que o código de inicialização do Electron só rode quando não estiver em modo de teste
+if (require.main === module) {
+    let monitorSwitcher = null;
+
+    app.whenReady().then(() => {
+        monitorSwitcher = new MonitorSwitcherApp();
+        monitorSwitcher.init().catch(error => {
+            console.error('Erro durante inicialização:', error);
+        });
     });
-});
 
-app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-        // App de bandeja, não deve fechar
-    }
-});
-
-app.on('before-quit', () => {
-    if (monitorSwitcher && monitorSwitcher.tray) {
-        monitorSwitcher.tray.destroy();
-    }
-});
-
-const gotTheLock = app.requestSingleInstanceLock();
-
-if (!gotTheLock) {
-    app.quit();
-} else {
-    app.on('second-instance', () => {
-        console.log('Segunda instância detectada');
+    app.on('window-all-closed', () => {
+        if (process.platform !== 'darwin') {
+            // App de bandeja, não deve fechar
+        }
     });
+
+    app.on('before-quit', () => {
+        if (monitorSwitcher && monitorSwitcher.tray) {
+            monitorSwitcher.tray.destroy();
+        }
+    });
+
+    const gotTheLock = app.requestSingleInstanceLock();
+
+    if (!gotTheLock) {
+        app.quit();
+    } else {
+        app.on('second-instance', () => {
+            console.log('Segunda instância detectada');
+        });
+    }
 }

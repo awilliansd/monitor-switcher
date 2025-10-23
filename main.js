@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, Notification } = require('electron');
-const { spawn, exec } = require('child_process');
+const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -20,7 +20,7 @@ class MonitorSwitcherApp {
         this.display1 = '';
         this.display2 = '';
         this.tray = null;
-        this.mainWindow = null;
+        this.currentPrimary = null; // Variável para controlar o estado
         this.isInitialized = false;
     }
 
@@ -34,11 +34,6 @@ class MonitorSwitcherApp {
         this.iconPath = this.getResourcePath('monitorswitcher.ico');
         
         this.isInitialized = true;
-        
-        console.log('Caminhos inicializados:');
-        console.log(`Modo: ${this.isDev ? 'Desenvolvimento' : 'Produção'}`);
-        console.log(`Caminho do tool: ${this.tool}`);
-        console.log(`Caminho do config: ${this.configFile}`);
     }
 
     getResourcePath(fileName) {
@@ -58,27 +53,26 @@ class MonitorSwitcherApp {
             app.setAppUserModelId('MonitorSwitcher');
         }
         
-        const isAutoStarted = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
-        
-        if (isAutoStarted) {
-            console.log('Aplicativo iniciado automaticamente com o Windows');
-        }
-        
         if (!fs.existsSync(this.tool)) {
-            await this.showError(`Arquivo '${path.basename(this.tool)}' não encontrado em:\n${this.tool}`);
-            setTimeout(() => app.quit(), 3000);
-            return;
+            await this.showError(`Arquivo '${path.basename(this.tool)}' não encontrado.`);
+            return app.quit();
         }
 
         if (!fs.existsSync(this.configFile)) {
-            await this.showError(`Arquivo '${path.basename(this.configFile)}' não encontrado em:\n${this.configFile}`);
-            setTimeout(() => app.quit(), 3000);
-            return;
+            await this.showError(`Arquivo '${path.basename(this.configFile)}' não encontrado.`);
+            return app.quit();
         }
 
         this.loadDisplayConfig();
+        
+        // Define o estado inicial. Assume que DISPLAY1 é o principal ao iniciar.
+        // O usuário pode precisar trocar uma vez para sincronizar.
+        this.currentPrimary = this.display1;
+        console.log(`Estado inicial definido para: ${this.currentPrimary}`);
+
         this.createTray();
         
+        const isAutoStarted = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
         if (!isAutoStarted && !this.isDev) {
             this.showBalloon('Monitor Switcher iniciado');
         }
@@ -104,90 +98,12 @@ class MonitorSwitcherApp {
         }
     }
 
-    // Função para dividir CSV respeitando aspas
-    parseCsvLine(line) {
-        const result = [];
-        let current = '';
-        let inQuotes = false;
-        for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-            if (char === '"') {
-                inQuotes = !inQuotes;
-            } else if (char === ',' && !inQuotes) {
-                result.push(current);
-                current = '';
-            } else {
-                current += char;
-            }
-        }
-        result.push(current);
-        return result;
-    }
-
-    /**
-     * Obtém o identificador estável (Serial Number ou Monitor ID) do monitor principal atual.
-     */
-    async getCurrentPrimaryId() {
-        const tempDir = app.getPath('temp');
-        const csvPath = path.join(tempDir, 'monitorswitcher_temp_primary.csv');
-        
-        await new Promise((resolve, reject) => {
-            const proc = spawn(this.tool, ['/scomma', csvPath], {
-                stdio: ['ignore', 'pipe', 'pipe'],
-                detached: false,
-                windowsHide: true
-            });
-            proc.on('close', () => resolve());
-            proc.on('error', reject);
-        });
-
-        if (!fs.existsSync(csvPath)) return null;
-
-        const csvData = fs.readFileSync(csvPath, 'utf8');
-        const lines = csvData.split('\n');
-        let foundId = null;
-        let header = [];
-
-        lines.forEach((line, idx) => {
-            if (line.trim() === '' || foundId) return;
-
-            const fields = this.parseCsvLine(line).map(f => f.replace(/"/g, '').trim());
-            
-            if (idx === 0) {
-                header = fields;
-                return;
-            }
-
-            const primaryIdx = header.findIndex(h => h.toLowerCase() === 'primary');
-            const primary = primaryIdx !== -1 ? fields[primaryIdx] : '';
-
-            if (primary.toLowerCase() === 'yes') {
-                const serialNumberIdx = header.findIndex(h => h.toLowerCase() === 'monitor serial number');
-                const monitorIdIdx = header.findIndex(h => h.toLowerCase() === 'monitor id');
-
-                const serialNumber = serialNumberIdx !== -1 ? fields[serialNumberIdx] : '';
-                const monitorId = monitorIdIdx !== -1 ? fields[monitorIdIdx] : '';
-
-                // Prioriza o número de série se for válido
-                if (serialNumber && !/^0+$/.test(serialNumber.trim())) {
-                    foundId = serialNumber;
-                } else {
-                    foundId = monitorId;
-                }
-            }
-        });
-
-        try { fs.unlinkSync(csvPath); } catch {}
-        return foundId;
-    }
-
     createTray() {
         let trayIcon;
         
         if (fs.existsSync(this.iconPath)) {
             trayIcon = nativeImage.createFromPath(this.iconPath);
         } else {
-            console.log(`Ícone não encontrado em: ${this.iconPath}`);
             trayIcon = nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
         }
 
@@ -211,7 +127,6 @@ class MonitorSwitcherApp {
             return;
         }
 
-        // MultiMonitorTool aceita o ID/Serial Number diretamente, entre aspas
         const command = `"${this.tool}" /SetPrimary "${displayId}"`;
         console.log(`Comando: ${command} (modo: ${modeName})`);
 
@@ -221,10 +136,14 @@ class MonitorSwitcherApp {
                 this.showError(`Erro ao alterar monitor:\n${error.message}`);
                 return;
             }
-            if (stderr) {
-                console.error(`Stderr: ${stderr}`);
-            }
-            console.log(`Stdout: ${stdout}`);
+            
+            // Se o comando foi bem sucedido, atualiza o estado interno
+            this.currentPrimary = displayId;
+            console.log(`Estado interno atualizado para: ${this.currentPrimary}`);
+            
+            if (stderr) console.error(`Stderr: ${stderr}`);
+            if (stdout) console.log(`Stdout: ${stdout}`);
+            
             this.showBalloon(`Alterado para ${modeName}.`);
         });
     }
@@ -248,36 +167,20 @@ class MonitorSwitcherApp {
 
     async togglePrimary() {
         if (!this.display1 || !this.display2) {
-            this.showError('Configuração de displays não carregada corretamente.');
-            return;
+            return this.showError('Configuração de displays não carregada corretamente.');
         }
 
-        const currentPrimaryId = await this.getCurrentPrimaryId();
-        console.log(`ID do monitor principal atual: ${currentPrimaryId}`);
-
-        if (!currentPrimaryId) {
-            this.showError('Não foi possível detectar o monitor principal atual.');
-            return;
-        }
-
-        // Normaliza as strings para comparação
-        const normCurrent = currentPrimaryId.trim();
-        const normDisplay1 = this.display1.trim();
-        const normDisplay2 = this.display2.trim();
+        console.log(`Tentando alternar. Estado atual: ${this.currentPrimary}`);
 
         let targetDisplayId;
         let modeName;
 
-        if (normCurrent === normDisplay1) {
+        if (this.currentPrimary === this.display1) {
             targetDisplayId = this.display2;
             modeName = 'Modo Jogo';
-        } else if (normCurrent === normDisplay2) {
+        } else {
             targetDisplayId = this.display1;
             modeName = 'Modo Reunião';
-        } else {
-            console.log(`IDs para comparação: \nAtual: '${normCurrent}'\nDisplay1: '${normDisplay1}'\nDisplay2: '${normDisplay2}'`);
-            this.showError('O monitor principal atual não corresponde a nenhum dos configurados.');
-            return;
         }
 
         await this.setPrimary(targetDisplayId, modeName);

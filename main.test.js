@@ -40,7 +40,7 @@ const { exec } = require('child_process');
 describe('MonitorSwitcherApp', () => {
   let app;
 
-/*   beforeEach(() => {
+  beforeEach(() => {
     // Reseta os mocks antes de cada teste
     jest.clearAllMocks();
 
@@ -53,22 +53,6 @@ describe('MonitorSwitcherApp', () => {
     // A função init é async, mas para os testes podemos chamá-la de forma síncrona
     // pois estamos simulando todas as operações de IO.
     app.init();
-  }); */
-
-  beforeEach(() => {
-    // Reseta os mocks antes de cada teste
-    jest.clearAllMocks();
-
-    // Simula a leitura do arquivo de configuração
-    const mockConfigFile = 'DISPLAY1=ID_MONITOR_1\nDISPLAY2=ID_MONITOR_2';
-    fs.readFileSync.mockReturnValue(mockConfigFile);
-    fs.existsSync.mockReturnValue(true);
-
-    app = new MonitorSwitcherApp();
-    // Inicializa os paths antes de carregar a configuração
-    app.initializePaths();
-    app.loadDisplayConfig();
-    app.currentPrimary = 'ID_MONITOR_1'; // Define o estado inicial
   });
 
   test('deve carregar a configuração dos monitores corretamente', () => {
@@ -106,8 +90,10 @@ describe('MonitorSwitcherApp', () => {
     app.currentPrimary = 'ID_MONITOR_1';
 
     // Simula que a execução do comando foi bem-sucedida
-    exec.mockImplementation((command, callback) => {
-      callback(null, 'stdout', ''); // (error, stdout, stderr)
+    // Simula que setPrimary atualiza o estado e resolve
+    app.setPrimary = jest.fn(async (id, mode) => {
+      app.currentPrimary = id;
+      return true;
     });
 
     await app.togglePrimary();

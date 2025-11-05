@@ -2,6 +2,7 @@ const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, Notification } = re
 const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { parse } = require('csv-parse');
 
 class MonitorSwitcherApp {
     openConfigFile() {
@@ -12,15 +13,16 @@ class MonitorSwitcherApp {
             this.showError('Arquivo de configuração não encontrado.');
         }
     }
+    
     constructor() {
         this.isDev = null;
         this.tool = null;
         this.configFile = null;
         this.iconPath = null;
-        this.display1 = '';
-        this.display2 = '';
+        this.display1StableId = '';
+        this.display2StableId = '';
         this.tray = null;
-        this.currentPrimary = null; // Variável para controlar o estado
+        this.currentPrimaryStableId = null;
         this.isInitialized = false;
     }
 
@@ -45,8 +47,6 @@ class MonitorSwitcherApp {
     }
 
     async init() {
-        console.log('Iniciando aplicação...');
-        
         this.initializePaths();
         
         if (process.platform === 'win32') {
@@ -64,14 +64,9 @@ class MonitorSwitcherApp {
         }
 
         this.loadDisplayConfig();
-        
-        // Define o estado inicial. Assume que DISPLAY1 é o principal ao iniciar.
-        // O usuário pode precisar trocar uma vez para sincronizar.
-        this.currentPrimary = this.display1;
-        console.log(`Estado inicial definido para: ${this.currentPrimary}`);
-
         this.createTray();
-        
+        await this.syncCurrentPrimaryState();
+
         const isAutoStarted = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
         if (!isAutoStarted && !this.isDev) {
             this.showBalloon('Monitor Switcher iniciado');
@@ -82,17 +77,16 @@ class MonitorSwitcherApp {
         try {
             const data = fs.readFileSync(this.configFile, 'utf8');
             const lines = data.split('\n');
-            this.display1 = '';
-            this.display2 = '';
+            this.display1StableId = '';
+            this.display2StableId = '';
             lines.forEach(line => {
                 const trimmedLine = line.trim();
                 if (trimmedLine.startsWith('DISPLAY1=')) {
-                    this.display1 = trimmedLine.substring('DISPLAY1='.length).trim();
+                    this.display1StableId = trimmedLine.substring('DISPLAY1='.length).trim();
                 } else if (trimmedLine.startsWith('DISPLAY2=')) {
-                    this.display2 = trimmedLine.substring('DISPLAY2='.length).trim();
+                    this.display2StableId = trimmedLine.substring('DISPLAY2='.length).trim();
                 }
             });
-            console.log(`Configuração carregada - DISPLAY1: ${this.display1}, DISPLAY2: ${this.display2}`);
         } catch (error) {
             console.error('Erro ao carregar configuração:', error);
         }
@@ -121,6 +115,180 @@ class MonitorSwitcherApp {
         });
     }
 
+    async getMonitorStateForToggle() {
+        const tempCsvPath = path.join(app.getPath('temp'), 'monitors.csv');
+        const command = `"${this.tool}" /scomma "${tempCsvPath}"`;
+
+        return new Promise((resolve) => {
+            exec(command, { timeout: 10000 }, async (error, stdout, stderr) => {
+                if (error) {
+                    this.showError(`Erro ao consultar monitores:\n${error.message}`);
+                    return resolve(null);
+                }
+                
+                if (!fs.existsSync(tempCsvPath)) {
+                    this.showError('Arquivo de estado do monitor não foi criado.');
+                    return resolve(null);
+                }
+
+                try {
+                    const csvData = fs.readFileSync(tempCsvPath, 'utf8');
+                    fs.unlinkSync(tempCsvPath);
+                    
+                    const processRecords = (records, delimiter) => {
+                        let primaryMonitor = records.find(r => r.Primary === 'Yes');
+
+                        if (!primaryMonitor) {
+                            primaryMonitor = records.find(r => 
+                                r['Is Primary'] === 'Yes' || 
+                                r['Is Primary'] === 'Sim'
+                            );
+                        }
+
+                        if (!primaryMonitor) {
+                            primaryMonitor = records.find(r => r.Active === 'Yes' && r.Disconnected === 'No');
+                        }
+
+                        if (!primaryMonitor) {
+                            this.showError('Não foi possível identificar o monitor principal atual.');
+                            return resolve(null);
+                        }
+                        
+                        let currentPrimaryStableId = primaryMonitor['Monitor Serial Number'] || primaryMonitor['Monitor ID'];
+                        
+                        if (currentPrimaryStableId.startsWith('00000') || currentPrimaryStableId === '') {
+                            currentPrimaryStableId = primaryMonitor['Monitor ID'];
+                        }
+
+                        const currentPrimaryId = primaryMonitor['Monitor ID'];
+                        
+                        const compareStableIds = (configuredId, detectedId) => {
+                            if (!configuredId || !detectedId) return false;
+                            
+                            configuredId = configuredId.trim();
+                            detectedId = detectedId.trim();
+                            
+                            if (configuredId === detectedId) {
+                                return true;
+                            }
+                            
+                            if (!configuredId.startsWith('MONITOR\\') && !detectedId.startsWith('MONITOR\\')) {
+                                return configuredId.includes(detectedId) || detectedId.includes(configuredId);
+                            }
+                            
+                            if (configuredId.startsWith('MONITOR\\') && detectedId.startsWith('MONITOR\\')) {
+                                const configuredParts = configuredId.split('\\');
+                                const detectedParts = detectedId.split('\\');
+                                
+                                const minLength = Math.min(configuredParts.length, detectedParts.length);
+                                let matches = 0;
+                                
+                                for (let i = 0; i < minLength - 1; i++) {
+                                    if (configuredParts[i] === detectedParts[i]) {
+                                        matches++;
+                                    }
+                                }
+                                
+                                return matches >= 2;
+                            }
+                            
+                            if (configuredId.startsWith('MONITOR\\') && !detectedId.startsWith('MONITOR\\')) {
+                                const shortIdFromConfig = configuredId.split('\\')[1];
+                                return detectedId.includes(shortIdFromConfig) || shortIdFromConfig.includes(detectedId);
+                            }
+                            
+                            if (!configuredId.startsWith('MONITOR\\') && detectedId.startsWith('MONITOR\\')) {
+                                const shortIdFromDetected = detectedId.split('\\')[1];
+                                return configuredId.includes(shortIdFromDetected) || shortIdFromDetected.includes(configuredId);
+                            }
+                            
+                            return false;
+                        };
+                        
+                        const isDisplay1Primary = compareStableIds(this.display1StableId, currentPrimaryStableId);
+                        const isDisplay2Primary = compareStableIds(this.display2StableId, currentPrimaryStableId);
+                        
+                        let targetStableId;
+                        let targetModeName;
+                        
+                        if (isDisplay1Primary) {
+                            targetStableId = this.display2StableId;
+                            targetModeName = 'Modo Jogo';
+                        } else if (isDisplay2Primary) {
+                            targetStableId = this.display1StableId;
+                            targetModeName = 'Modo Reunião';
+                        } else {
+                            this.showError(`Monitor principal atual não corresponde a DISPLAY1 ou DISPLAY2 configurados.`);
+                            return resolve(null);
+                        }
+                        
+                        const targetMonitor = records.find(r => {
+                            let stableId = r['Monitor Serial Number'] || r['Monitor ID'];
+                            if (stableId.startsWith('00000') || !stableId) {
+                                stableId = r['Monitor ID'];
+                            }
+                            return compareStableIds(targetStableId, stableId);
+                        });
+
+                        if (!targetMonitor) {
+                            this.showError(`Monitor alvo não encontrado. Verifique a configuração.`);
+                            return resolve(null);
+                        }
+                        
+                        const targetId = targetMonitor['Monitor ID'];
+                        
+                        this.currentPrimaryStableId = isDisplay1Primary ? this.display1StableId : this.display2StableId;
+
+                        resolve({
+                            currentPrimaryId: currentPrimaryId,
+                            currentPrimaryStableId: this.currentPrimaryStableId,
+                            targetId: targetId,
+                            targetStableId: targetStableId,
+                            targetModeName: targetModeName
+                        });
+                    };
+
+                    parse(csvData, {
+                        columns: true,
+                        skip_empty_lines: true,
+                        trim: true,
+                        delimiter: ','
+                    }, (err, records) => {
+                        if (!err && records && records.length > 0) {
+                            return processRecords(records, ',');
+                        }
+                        
+                        parse(csvData, {
+                            columns: true,
+                            skip_empty_lines: true,
+                            trim: true,
+                            delimiter: ';'
+                        }, (err2, records2) => {
+                            if (!err2 && records2 && records2.length > 0) {
+                                return processRecords(records2, ';');
+                            }
+                            
+                            this.showError('Erro ao analisar dados de monitor.');
+                            return resolve(null);
+                        });
+                    });
+                } catch (e) {
+                    this.showError(`Erro interno ao processar estado do monitor: ${e.message}`);
+                    resolve(null);
+                }
+            });
+        });
+    }
+
+    async syncCurrentPrimaryState() {
+        const state = await this.getMonitorStateForToggle();
+        if (state) {
+            this.currentPrimaryStableId = state.currentPrimaryStableId;
+        } else {
+            this.currentPrimaryStableId = this.display1StableId;
+        }
+    }
+
     async setPrimary(displayId, modeName) {
         if (!displayId || displayId.trim() === '') {
             this.showError('Display ID não configurado corretamente');
@@ -128,21 +296,18 @@ class MonitorSwitcherApp {
         }
 
         const command = `"${this.tool}" /SetPrimary "${displayId}"`;
-        console.log(`Comando: ${command} (modo: ${modeName})`);
 
         exec(command, (error, stdout, stderr) => {
             if (error) {
-                console.error(`Erro ao executar comando: ${error}`);
                 this.showError(`Erro ao alterar monitor:\n${error.message}`);
                 return;
             }
             
-            // Se o comando foi bem sucedido, atualiza o estado interno
-            this.currentPrimary = displayId;
-            console.log(`Estado interno atualizado para: ${this.currentPrimary}`);
-            
-            if (stderr) console.error(`Stderr: ${stderr}`);
-            if (stdout) console.log(`Stdout: ${stdout}`);
+            if (modeName === 'Modo Jogo') {
+                this.currentPrimaryStableId = this.display2StableId;
+            } else {
+                this.currentPrimaryStableId = this.display1StableId;
+            }
             
             this.showBalloon(`Alterado para ${modeName}.`);
         });
@@ -166,24 +331,15 @@ class MonitorSwitcherApp {
     }
 
     async togglePrimary() {
-        if (!this.display1 || !this.display2) {
+        if (!this.display1StableId || !this.display2StableId) {
             return this.showError('Configuração de displays não carregada corretamente.');
         }
 
-        console.log(`Tentando alternar. Estado atual: ${this.currentPrimary}`);
-
-        let targetDisplayId;
-        let modeName;
-
-        if (this.currentPrimary === this.display1) {
-            targetDisplayId = this.display2;
-            modeName = 'Modo Jogo';
-        } else {
-            targetDisplayId = this.display1;
-            modeName = 'Modo Reunião';
+        const state = await this.getMonitorStateForToggle();
+        
+        if (state) {
+            await this.setPrimary(state.targetId, state.targetModeName);
         }
-
-        await this.setPrimary(targetDisplayId, modeName);
     }
 
     updateTrayMenu() {
@@ -233,10 +389,8 @@ class MonitorSwitcherApp {
     }
 }
 
-// Exporta a classe para permitir testes
 module.exports = MonitorSwitcherApp;
 
-// Garante que o código de inicialização do Electron só rode quando não estiver em modo de teste
 if (require.main === module) {
     let monitorSwitcher = null;
 
@@ -249,7 +403,6 @@ if (require.main === module) {
 
     app.on('window-all-closed', () => {
         if (process.platform !== 'darwin') {
-            // App de bandeja, não deve fechar
         }
     });
 
@@ -264,8 +417,6 @@ if (require.main === module) {
     if (!gotTheLock) {
         app.quit();
     } else {
-        app.on('second-instance', () => {
-            console.log('Segunda instância detectada');
-        });
+        app.on('second-instance', () => {});
     }
 }

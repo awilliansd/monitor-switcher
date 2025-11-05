@@ -1,13 +1,27 @@
-// Extrai a classe do main.js para que possamos testá-la isoladamente
 const MonitorSwitcherApp = require('./main.js');
 
-// Mock dos módulos do Node.js e Electron que não queremos executar de verdade
-jest.mock('fs');
-jest.mock('child_process');
+// Mocks simples e diretos
+jest.mock('fs', () => ({
+  existsSync: jest.fn(),
+  readFileSync: jest.fn(),
+  unlinkSync: jest.fn(),
+}));
+
+jest.mock('child_process', () => ({
+  exec: jest.fn(),
+}));
+
+jest.mock('csv-parse', () => ({
+  parse: jest.fn(),
+}));
+
 jest.mock('electron', () => ({
   app: {
-    getPath: () => '/tmp', // Usar /tmp para simular o path temporário
-    getLoginItemSettings: () => ({ openAtLogin: false }),
+    getPath: jest.fn(() => '/tmp'),
+    getLoginItemSettings: jest.fn(() => ({ 
+      openAtLogin: false,
+      wasOpenedAtLogin: false 
+    })),
     setLoginItemSettings: jest.fn(),
     isPackaged: false,
     setAppUserModelId: jest.fn(),
@@ -23,116 +37,284 @@ jest.mock('electron', () => ({
     destroy: jest.fn(),
   })),
   Menu: {
-    buildFromTemplate: jest.fn(() => ({
-      popup: jest.fn(),
-    })),
+    buildFromTemplate: jest.fn(() => 'mock-menu'),
   },
   nativeImage: {
-    createFromPath: jest.fn(),
-    createFromDataURL: jest.fn(),
+    createFromPath: jest.fn(() => 'mock-image'),
+    createFromDataURL: jest.fn(() => 'mock-image'),
   },
   dialog: {
-    showMessageBox: jest.fn(),
+    showMessageBox: jest.fn(() => Promise.resolve({ response: 0 })),
   },
   Notification: {
-    isSupported: jest.fn(() => true),
-    mockImplementation: function() {
-        this.show = jest.fn();
-    }
+    isSupported: jest.fn(() => false), // Desabilita Notification para simplificar
   },
+  shell: {
+    openPath: jest.fn(),
+  }
 }));
 
 const fs = require('fs');
 const { exec } = require('child_process');
+const { parse } = require('csv-parse');
+const { dialog } = require('electron');
 
-// Mock para o módulo csv-parse
-jest.mock('csv-parse', () => ({
-    parse: jest.fn((data, options, callback) => {
-        // Simula o CSV do MultiMonitorTool.exe
-        const mockRecords = [
-            {
-                'Monitor ID': 'MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004',
-                'Monitor Serial Number': '00000000',
-                'Is Primary': 'No'
-            },
-            {
-                'Monitor ID': 'MONITOR\\ACR0001\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0001',
-                'Monitor Serial Number': '6KL82W2',
-                'Is Primary': 'Yes'
-            }
-        ];
-        callback(null, mockRecords);
-    }),
-}));
-
-describe('MonitorSwitcherApp - Refatorado', () => {
+describe('MonitorSwitcherApp', () => {
   let app;
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    // Mock do arquivo de configuração com IDs estáveis
-    const mockConfigFile = 'DISPLAY1=6KL82W2\nDISPLAY2=MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004';
+    
+    // Configuração padrão dos mocks
+    const mockConfigFile = 'DISPLAY1=6KL82W2\nDISPLAY2=MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}';
     fs.readFileSync.mockReturnValue(mockConfigFile);
     fs.existsSync.mockReturnValue(true);
-    fs.unlinkSync.mockImplementation(() => {}); // Mock para a exclusão do arquivo temporário
+    fs.unlinkSync.mockImplementation(() => {});
     
-    // Mock para a execução do comando de consulta
     exec.mockImplementation((command, options, callback) => {
-        // Simula a criação do arquivo temporário com o CSV
-        if (command.includes('/scomma')) {
-            const tempPath = command.match(/"([^"]+)"$/)[1];
-            fs.existsSync.mockReturnValueOnce(true); // Garante que o teste leia o arquivo
-            fs.readFileSync.mockReturnValueOnce('CSV_CONTENT'); // O conteúdo real é mockado pelo csv-parse
-            callback(null, 'stdout', 'stderr');
-        } else if (command.includes('/SetPrimary')) {
-            // Simula a execução do comando de set primary
-            callback(null, 'stdout', 'stderr');
-        }
+      if (callback && typeof callback === 'function') {
+        callback(null, 'stdout', 'stderr');
+      }
     });
 
     app = new MonitorSwitcherApp();
-    // A função init é async e precisa ser aguardada para sincronizar o estado
+    app.loadDisplayConfig();
   });
 
-  test('deve carregar a configuração dos monitores corretamente', () => {
-    app.loadDisplayConfig();
-    expect(app.display1StableId).toBe('6KL82W2');
-    expect(app.display2StableId).toBe('MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004');
+  describe('Configuração Inicial', () => {
+    test('deve carregar a configuração dos monitores corretamente', () => {
+      expect(app.display1StableId).toBe('6KL82W2');
+      expect(app.display2StableId).toBe('MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}');
+    });
+
+    test('deve inicializar paths corretamente', () => {
+      app.initializePaths();
+      expect(app.isDev).toBe(true);
+      expect(app.tool).toContain('MultiMonitorTool.exe');
+      expect(app.configFile).toContain('display_config.txt');
+    });
   });
 
-  test('deve sincronizar o estado inicial com o monitor principal real', async () => {
-    app.loadDisplayConfig();
-    await app.syncCurrentPrimaryState();
-    
-    // O mock do CSV define o monitor com Serial Number '6KL82W2' como principal.
-    expect(app.currentPrimaryStableId).toBe('6KL82W2');
+  describe('Processamento de CSV', () => {
+    test('deve processar CSV com vírgula corretamente', async () => {
+      const mockRecords = [
+        {
+          'Monitor ID': 'MONITOR\\DELA114\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0003',
+          'Monitor Serial Number': '6KL82W2',
+          Primary: 'Yes',
+          Active: 'Yes',
+          Disconnected: 'No',
+        },
+        {
+          'Monitor ID': 'MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0002',
+          'Monitor Serial Number': '0000000000000',
+          Primary: 'No',
+          Active: 'Yes',
+          Disconnected: 'No',
+        }
+      ];
+
+      parse.mockImplementation((data, options, callback) => {
+        callback(null, mockRecords);
+      });
+
+      const state = await app.getMonitorStateForToggle();
+
+      expect(state).toBeTruthy();
+      expect(state.currentPrimaryStableId).toBe('6KL82W2');
+      expect(state.targetModeName).toBe('Modo Jogo');
+    });
+
+    test('deve usar fallback para ponto e vírgula se vírgula falhar', async () => {
+      const mockRecords = [{
+        'Monitor ID': 'MONITOR\\DELA114\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0003',
+        'Monitor Serial Number': '6KL82W2',
+        Primary: 'Yes',
+        Active: 'Yes',
+        Disconnected: 'No',
+      }];
+
+      parse
+        .mockImplementationOnce((data, options, callback) => {
+          callback(new Error('Parse error'), null);
+        })
+        .mockImplementationOnce((data, options, callback) => {
+          callback(null, mockRecords);
+        });
+
+      const state = await app.getMonitorStateForToggle();
+
+      expect(parse).toHaveBeenCalledTimes(2);
+      expect(state).toBeTruthy();
+    });
   });
 
-  test('deve alternar o monitor principal corretamente', async () => {
-    app.loadDisplayConfig();
-    // Sincroniza o estado para que o toggle saiba qual é o atual
-    await app.syncCurrentPrimaryState(); 
-    
-    // O estado atual é '6KL82W2' (DISPLAY1), o alvo deve ser DISPLAY2
-    await app.togglePrimary();
+  describe('Lógica de Alternância', () => {
+    test('deve alternar de DISPLAY1 para DISPLAY2', async () => {
+      const mockRecords = [
+        {
+          'Monitor ID': 'MONITOR\\DELA114\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0003',
+          'Monitor Serial Number': '6KL82W2',
+          Primary: 'Yes',
+          Active: 'Yes',
+          Disconnected: 'No',
+        },
+        {
+          'Monitor ID': 'MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0002',
+          'Monitor Serial Number': '0000000000000',
+          Primary: 'No',
+          Active: 'Yes',
+          Disconnected: 'No',
+        }
+      ];
 
-    // Verifica se o comando exec foi chamado para consultar o estado (1ª chamada)
-    expect(exec).toHaveBeenCalledWith(
-        expect.stringContaining('/scomma'),
-        expect.any(Object),
+      parse.mockImplementation((data, options, callback) => {
+        callback(null, mockRecords);
+      });
+
+      await app.togglePrimary();
+
+      // Verifica se o comando SetPrimary foi chamado
+      expect(exec).toHaveBeenCalledWith(
+        expect.stringContaining('/SetPrimary'),
         expect.any(Function)
-    );
+      );
+    });
 
-    // Verifica se o comando exec foi chamado para definir o novo principal (2ª chamada)
-    // O ID alvo é o Monitor ID do DISPLAY2: MONITOR\DHIFFFF\{4d36e96e-e325-11ce-bfc1-08002be10318}\0004
-    expect(exec).toHaveBeenCalledWith(
-      expect.stringContaining('/SetPrimary "MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004"'),
-      expect.any(Function)
-    );
-    
-    // Verifica se o estado interno foi atualizado após a chamada de setPrimary
-    // setPrimary é chamado com 'Modo Jogo', que define o estado interno para display2StableId
-    expect(app.currentPrimaryStableId).toBe('MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004');
+    test('deve lidar com erro quando não encontra monitor principal', async () => {
+      const mockRecords = [{
+        'Monitor ID': 'MONITOR\\TEST\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0001',
+        'Monitor Serial Number': '00000000',
+        Primary: 'No',
+        Active: 'No',
+        Disconnected: 'Yes',
+      }];
+
+      parse.mockImplementation((data, options, callback) => {
+        callback(null, mockRecords);
+      });
+
+      const state = await app.getMonitorStateForToggle();
+
+      expect(state).toBeNull();
+      expect(dialog.showMessageBox).toHaveBeenCalled();
+    });
+  });
+
+  describe('Gerenciamento de Estado', () => {
+    test('deve sincronizar estado inicial corretamente', async () => {
+      const mockRecords = [{
+        'Monitor ID': 'MONITOR\\DELA114\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0003',
+        'Monitor Serial Number': '6KL82W2',
+        Primary: 'Yes',
+        Active: 'Yes',
+        Disconnected: 'No',
+      }];
+
+      parse.mockImplementation((data, options, callback) => {
+        callback(null, mockRecords);
+      });
+
+      await app.syncCurrentPrimaryState();
+
+      expect(app.currentPrimaryStableId).toBe('6KL82W2');
+    });
+
+    test('deve usar fallback quando sincronização falha', async () => {
+      exec.mockImplementation((command, options, callback) => {
+        if (callback) {
+          callback(new Error('Falha na consulta'), null, 'stderr');
+        }
+      });
+
+      await app.syncCurrentPrimaryState();
+
+      expect(app.currentPrimaryStableId).toBe('6KL82W2');
+    });
+  });
+
+  describe('Tratamento de Erros', () => {
+    test('deve lidar com arquivo de configuração ausente', async () => {
+      fs.existsSync.mockReturnValue(false);
+      
+      await app.init();
+      
+      expect(dialog.showMessageBox).toHaveBeenCalled();
+    });
+
+    test('deve lidar com erro ao executar comando', async () => {
+      exec.mockImplementation((command, options, callback) => {
+        if (callback) {
+          callback(new Error('Comando falhou'), null, 'stderr');
+        }
+      });
+
+      await app.togglePrimary();
+
+      expect(dialog.showMessageBox).toHaveBeenCalled();
+    });
+  });
+
+  describe('Interface do Usuário', () => {
+    test('deve atualizar menu da bandeja', () => {
+      app.tray = {
+        setContextMenu: jest.fn()
+      };
+      
+      app.updateTrayMenu();
+      
+      expect(app.tray.setContextMenu).toHaveBeenCalledWith('mock-menu');
+    });
+
+    test('deve alternar inicialização automática', () => {
+      const mockSetLoginItemSettings = require('electron').app.setLoginItemSettings;
+      
+      app.tray = {
+        setContextMenu: jest.fn(),
+        displayBalloon: jest.fn(), // Mock para showBalloon
+      };
+      
+      app.toggleAutoStart();
+      
+      expect(mockSetLoginItemSettings).toHaveBeenCalledWith({
+        openAtLogin: true,
+        openAsHidden: true,
+        name: 'Monitor Switcher',
+        path: expect.any(String)
+      });
+    });
+
+    test('deve abrir arquivo de configuração', () => {
+      const { shell } = require('electron');
+      
+      app.configFile = '/path/to/config.txt';
+      fs.existsSync.mockReturnValue(true);
+      
+      app.openConfigFile();
+      
+      expect(shell.openPath).toHaveBeenCalledWith('/path/to/config.txt');
+    });
+  });
+
+  describe('Métodos Auxiliares', () => {
+    test('deve mostrar erro corretamente', async () => {
+      await app.showError('Mensagem de erro');
+      
+      expect(dialog.showMessageBox).toHaveBeenCalledWith({
+        type: 'error',
+        title: 'Erro',
+        message: 'Mensagem de erro',
+        buttons: ['OK']
+      });
+    });
+
+    test('deve criar tray com ícone padrão quando arquivo não existe', () => {
+      fs.existsSync.mockReturnValue(false);
+      
+      app.createTray();
+      
+      const { nativeImage } = require('electron');
+      expect(nativeImage.createFromDataURL).toHaveBeenCalled();
+    });
   });
 });

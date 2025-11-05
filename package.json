@@ -1,6 +1,6 @@
 {
   "name": "monitor-switcher-electron",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Aplicativo de bandeja para alternar entre monitores usando MultiMonitorTool",
   "main": "main.js",
   "scripts": {

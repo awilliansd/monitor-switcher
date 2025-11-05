@@ -13,15 +13,16 @@ class MonitorSwitcherApp {
             this.showError('Arquivo de configuração não encontrado.');
         }
     }
+    
     constructor() {
         this.isDev = null;
         this.tool = null;
         this.configFile = null;
         this.iconPath = null;
-        this.display1StableId = ''; // ID estável configurado (Serial Number ou Monitor ID)
-        this.display2StableId = ''; // ID estável configurado (Serial Number ou Monitor ID)
+        this.display1StableId = '';
+        this.display2StableId = '';
         this.tray = null;
-        this.currentPrimaryStableId = null; // ID estável do monitor atualmente principal (para lógica de alternância)
+        this.currentPrimaryStableId = null;
         this.isInitialized = false;
     }
 
@@ -46,8 +47,6 @@ class MonitorSwitcherApp {
     }
 
     async init() {
-        console.log('Iniciando aplicação...');
-        
         this.initializePaths();
         
         if (process.platform === 'win32') {
@@ -65,10 +64,7 @@ class MonitorSwitcherApp {
         }
 
         this.loadDisplayConfig();
-        
         this.createTray();
-        
-        // Sincroniza o estado inicial com o monitor principal real
         await this.syncCurrentPrimaryState();
 
         const isAutoStarted = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
@@ -91,7 +87,6 @@ class MonitorSwitcherApp {
                     this.display2StableId = trimmedLine.substring('DISPLAY2='.length).trim();
                 }
             });
-            console.log(`Configuração carregada - DISPLAY1 (Stable): ${this.display1StableId}, DISPLAY2 (Stable): ${this.display2StableId}`);
         } catch (error) {
             console.error('Erro ao carregar configuração:', error);
         }
@@ -120,20 +115,13 @@ class MonitorSwitcherApp {
         });
     }
 
-    /**
-     * Consulta o MultiMonitorTool para obter a lista atual de monitores e identifica o principal.
-     * @returns {Promise<{currentPrimaryId: string, currentPrimaryStableId: string, targetId: string, targetStableId: string, targetModeName: string}|null>}
-     */
     async getMonitorStateForToggle() {
         const tempCsvPath = path.join(app.getPath('temp'), 'monitors.csv');
         const command = `"${this.tool}" /scomma "${tempCsvPath}"`;
-        
-        console.log(`Consultando estado dos monitores: ${command}`);
 
         return new Promise((resolve) => {
-            exec(command, { timeout: 5000 }, async (error, stdout, stderr) => {
+            exec(command, { timeout: 10000 }, async (error, stdout, stderr) => {
                 if (error) {
-                    console.error(`Erro ao consultar monitores: ${error}`);
                     this.showError(`Erro ao consultar monitores:\n${error.message}`);
                     return resolve(null);
                 }
@@ -145,47 +133,80 @@ class MonitorSwitcherApp {
 
                 try {
                     const csvData = fs.readFileSync(tempCsvPath, 'utf8');
-                    fs.unlinkSync(tempCsvPath); // Limpa o arquivo temporário
+                    fs.unlinkSync(tempCsvPath);
                     
-                    parse(csvData, {
-                        columns: true,
-                        skip_empty_lines: true,
-                        trim: true
-                    }, (err, records) => {
-                        if (err) {
-                            console.error('Erro ao analisar CSV:', err);
-                            this.showError('Erro ao analisar dados de monitor.');
-                            return resolve(null);
+                    const processRecords = (records, delimiter) => {
+                        let primaryMonitor = records.find(r => r.Primary === 'Yes');
+
+                        if (!primaryMonitor) {
+                            primaryMonitor = records.find(r => 
+                                r['Is Primary'] === 'Yes' || 
+                                r['Is Primary'] === 'Sim'
+                            );
                         }
-                        
-                        const primaryMonitor = records.find(r => r['Is Primary'] === 'Yes');
-                        
+
+                        if (!primaryMonitor) {
+                            primaryMonitor = records.find(r => r.Active === 'Yes' && r.Disconnected === 'No');
+                        }
+
                         if (!primaryMonitor) {
                             this.showError('Não foi possível identificar o monitor principal atual.');
                             return resolve(null);
                         }
                         
-                        // O ID a ser usado no /SetPrimary é o 'Monitor ID' ou 'Device ID'
-                        // O Monitor ID é mais estável que o Device ID (\\.\DISPLAY1), mas menos que o Serial Number.
-                        // O MultiMonitorTool aceita o Monitor ID ou o Serial Number.
-                        // Vamos usar o Monitor ID (que inclui o Serial Number se disponível) ou o Device ID como fallback para o comando.
-                        
-                        let currentPrimaryId = primaryMonitor['Monitor ID'] || primaryMonitor['Device ID'];
                         let currentPrimaryStableId = primaryMonitor['Monitor Serial Number'] || primaryMonitor['Monitor ID'];
                         
-                        // Se o Serial Number for '00000000', o Monitor ID é o melhor identificador estável.
-                        if (currentPrimaryStableId.startsWith('00000')) {
+                        if (currentPrimaryStableId.startsWith('00000') || currentPrimaryStableId === '') {
                             currentPrimaryStableId = primaryMonitor['Monitor ID'];
                         }
 
-                        // Garante que o ID usado no comando seja o mais robusto que o MultiMonitorTool aceita
-                        // O MultiMonitorTool aceita o Monitor ID completo ou o Serial Number.
-                        // Usaremos o Monitor ID completo, pois é o que a aplicação original usava em DISPLAY2.
-                        currentPrimaryId = primaryMonitor['Monitor ID'];
+                        const currentPrimaryId = primaryMonitor['Monitor ID'];
                         
-                        // Mapeia o ID estável atual para o configurado
-                        let isDisplay1Primary = currentPrimaryStableId.includes(this.display1StableId);
-                        let isDisplay2Primary = currentPrimaryStableId.includes(this.display2StableId);
+                        const compareStableIds = (configuredId, detectedId) => {
+                            if (!configuredId || !detectedId) return false;
+                            
+                            configuredId = configuredId.trim();
+                            detectedId = detectedId.trim();
+                            
+                            if (configuredId === detectedId) {
+                                return true;
+                            }
+                            
+                            if (!configuredId.startsWith('MONITOR\\') && !detectedId.startsWith('MONITOR\\')) {
+                                return configuredId.includes(detectedId) || detectedId.includes(configuredId);
+                            }
+                            
+                            if (configuredId.startsWith('MONITOR\\') && detectedId.startsWith('MONITOR\\')) {
+                                const configuredParts = configuredId.split('\\');
+                                const detectedParts = detectedId.split('\\');
+                                
+                                const minLength = Math.min(configuredParts.length, detectedParts.length);
+                                let matches = 0;
+                                
+                                for (let i = 0; i < minLength - 1; i++) {
+                                    if (configuredParts[i] === detectedParts[i]) {
+                                        matches++;
+                                    }
+                                }
+                                
+                                return matches >= 2;
+                            }
+                            
+                            if (configuredId.startsWith('MONITOR\\') && !detectedId.startsWith('MONITOR\\')) {
+                                const shortIdFromConfig = configuredId.split('\\')[1];
+                                return detectedId.includes(shortIdFromConfig) || shortIdFromConfig.includes(detectedId);
+                            }
+                            
+                            if (!configuredId.startsWith('MONITOR\\') && detectedId.startsWith('MONITOR\\')) {
+                                const shortIdFromDetected = detectedId.split('\\')[1];
+                                return configuredId.includes(shortIdFromDetected) || shortIdFromDetected.includes(configuredId);
+                            }
+                            
+                            return false;
+                        };
+                        
+                        const isDisplay1Primary = compareStableIds(this.display1StableId, currentPrimaryStableId);
+                        const isDisplay2Primary = compareStableIds(this.display2StableId, currentPrimaryStableId);
                         
                         let targetStableId;
                         let targetModeName;
@@ -197,29 +218,25 @@ class MonitorSwitcherApp {
                             targetStableId = this.display1StableId;
                             targetModeName = 'Modo Reunião';
                         } else {
-                            // Se o monitor principal atual não for nenhum dos configurados, não podemos alternar.
-                            this.showError(`Monitor principal atual (${currentPrimaryStableId}) não corresponde a DISPLAY1 ou DISPLAY2 configurados.`);
+                            this.showError(`Monitor principal atual não corresponde a DISPLAY1 ou DISPLAY2 configurados.`);
                             return resolve(null);
                         }
                         
-                        // Encontra o monitor alvo na lista de records
                         const targetMonitor = records.find(r => {
-                            const stableId = r['Monitor Serial Number'] || r['Monitor ID'];
-                            return stableId.includes(targetStableId);
+                            let stableId = r['Monitor Serial Number'] || r['Monitor ID'];
+                            if (stableId.startsWith('00000') || !stableId) {
+                                stableId = r['Monitor ID'];
+                            }
+                            return compareStableIds(targetStableId, stableId);
                         });
 
                         if (!targetMonitor) {
-                            this.showError(`Monitor alvo com ID estável ${targetStableId} não encontrado na lista atual de monitores.`);
+                            this.showError(`Monitor alvo não encontrado. Verifique a configuração.`);
                             return resolve(null);
                         }
                         
-                        // O ID real a ser usado no comando /SetPrimary para o monitor alvo
                         const targetId = targetMonitor['Monitor ID'];
-
-                        console.log(`Monitor Principal Atual (Stable ID): ${currentPrimaryStableId}`);
-                        console.log(`Monitor Alvo (Stable ID): ${targetStableId}`);
                         
-                        // Atualiza o estado interno para o ID estável do monitor principal atual
                         this.currentPrimaryStableId = isDisplay1Primary ? this.display1StableId : this.display2StableId;
 
                         resolve({
@@ -229,9 +246,33 @@ class MonitorSwitcherApp {
                             targetStableId: targetStableId,
                             targetModeName: targetModeName
                         });
+                    };
+
+                    parse(csvData, {
+                        columns: true,
+                        skip_empty_lines: true,
+                        trim: true,
+                        delimiter: ','
+                    }, (err, records) => {
+                        if (!err && records && records.length > 0) {
+                            return processRecords(records, ',');
+                        }
+                        
+                        parse(csvData, {
+                            columns: true,
+                            skip_empty_lines: true,
+                            trim: true,
+                            delimiter: ';'
+                        }, (err2, records2) => {
+                            if (!err2 && records2 && records2.length > 0) {
+                                return processRecords(records2, ';');
+                            }
+                            
+                            this.showError('Erro ao analisar dados de monitor.');
+                            return resolve(null);
+                        });
                     });
                 } catch (e) {
-                    console.error('Erro ao processar estado do monitor:', e);
                     this.showError(`Erro interno ao processar estado do monitor: ${e.message}`);
                     resolve(null);
                 }
@@ -243,11 +284,8 @@ class MonitorSwitcherApp {
         const state = await this.getMonitorStateForToggle();
         if (state) {
             this.currentPrimaryStableId = state.currentPrimaryStableId;
-            console.log(`Estado inicial sincronizado com: ${this.currentPrimaryStableId}`);
         } else {
-            // Fallback: se não conseguir sincronizar, assume DISPLAY1 para tentar a primeira alternância
             this.currentPrimaryStableId = this.display1StableId;
-            console.log(`Falha ao sincronizar estado. Assumindo: ${this.currentPrimaryStableId}`);
         }
     }
 
@@ -257,31 +295,19 @@ class MonitorSwitcherApp {
             return;
         }
 
-        // O MultiMonitorTool aceita o Monitor ID completo ou o Serial Number.
-        // Usamos o ID dinâmico encontrado na consulta.
         const command = `"${this.tool}" /SetPrimary "${displayId}"`;
-        console.log(`Comando: ${command} (modo: ${modeName})`);
 
         exec(command, (error, stdout, stderr) => {
             if (error) {
-                console.error(`Erro ao executar comando: ${error}`);
                 this.showError(`Erro ao alterar monitor:\n${error.message}`);
                 return;
             }
             
-            // Se o comando foi bem sucedido, atualiza o estado interno
-            // A lógica de alternância já garante que o ID estável do alvo é o novo principal.
-            // Apenas garantimos que o estado interno seja o ID estável do monitor que acabamos de definir como principal.
             if (modeName === 'Modo Jogo') {
                 this.currentPrimaryStableId = this.display2StableId;
             } else {
                 this.currentPrimaryStableId = this.display1StableId;
             }
-            
-            console.log(`Estado interno atualizado para: ${this.currentPrimaryStableId}`);
-            
-            if (stderr) console.error(`Stderr: ${stderr}`);
-            if (stdout) console.log(`Stdout: ${stdout}`);
             
             this.showBalloon(`Alterado para ${modeName}.`);
         });
@@ -309,16 +335,10 @@ class MonitorSwitcherApp {
             return this.showError('Configuração de displays não carregada corretamente.');
         }
 
-        console.log(`Tentando alternar. Estado estável atual: ${this.currentPrimaryStableId}`);
-        
-        // Consulta o estado atual e determina o alvo
         const state = await this.getMonitorStateForToggle();
         
         if (state) {
-            // O state já contém o ID dinâmico do monitor alvo e o nome do modo
             await this.setPrimary(state.targetId, state.targetModeName);
-        } else {
-            console.error('Falha ao obter estado do monitor para alternância.');
         }
     }
 
@@ -369,10 +389,8 @@ class MonitorSwitcherApp {
     }
 }
 
-// Exporta a classe para permitir testes
 module.exports = MonitorSwitcherApp;
 
-// Garante que o código de inicialização do Electron só rode quando não estiver em modo de teste
 if (require.main === module) {
     let monitorSwitcher = null;
 
@@ -385,7 +403,6 @@ if (require.main === module) {
 
     app.on('window-all-closed', () => {
         if (process.platform !== 'darwin') {
-            // App de bandeja, não deve fechar
         }
     });
 
@@ -400,8 +417,6 @@ if (require.main === module) {
     if (!gotTheLock) {
         app.quit();
     } else {
-        app.on('second-instance', () => {
-            console.log('Segunda instância detectada');
-        });
+        app.on('second-instance', () => {});
     }
 }

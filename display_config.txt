@@ -4,7 +4,7 @@
 # Se não, use o valor completo do campo 'Monitor ID'.
 
 DISPLAY1=6KL82W2
-DISPLAY2=MONITOR\DHIFFFF\{4d36e96e-e325-11ce-bfc1-08002be10318}\0004
+DISPLAY2=MONITOR\DHIFFFF\{4d36e96e-e325-11ce-bfc1-08002be10318}
 
 # Para encontrar os valores corretos:
 # 1. Execute o comando: MultiMonitorTool.exe /scomma monitors.csv

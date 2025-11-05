@@ -6,19 +6,21 @@ jest.mock('fs');
 jest.mock('child_process');
 jest.mock('electron', () => ({
   app: {
-    getPath: () => 'temp',
+    getPath: () => '/tmp', // Usar /tmp para simular o path temporário
     getLoginItemSettings: () => ({ openAtLogin: false }),
     setLoginItemSettings: jest.fn(),
     isPackaged: false,
-    // Adiciona mocks para as funções que estavam faltando
     setAppUserModelId: jest.fn(),
     on: jest.fn(),
     quit: jest.fn(),
     requestSingleInstanceLock: jest.fn(() => true),
+    whenReady: jest.fn(() => Promise.resolve()),
   },
   Tray: jest.fn(() => ({
     setToolTip: jest.fn(),
     setContextMenu: jest.fn(),
+    displayBalloon: jest.fn(),
+    destroy: jest.fn(),
   })),
   Menu: {
     buildFromTemplate: jest.fn(() => ({
@@ -27,78 +29,110 @@ jest.mock('electron', () => ({
   },
   nativeImage: {
     createFromPath: jest.fn(),
+    createFromDataURL: jest.fn(),
   },
   dialog: {
     showMessageBox: jest.fn(),
   },
-  Notification: jest.fn(),
+  Notification: {
+    isSupported: jest.fn(() => true),
+    mockImplementation: function() {
+        this.show = jest.fn();
+    }
+  },
 }));
 
 const fs = require('fs');
 const { exec } = require('child_process');
 
-describe('MonitorSwitcherApp', () => {
+// Mock para o módulo csv-parse
+jest.mock('csv-parse', () => ({
+    parse: jest.fn((data, options, callback) => {
+        // Simula o CSV do MultiMonitorTool.exe
+        const mockRecords = [
+            {
+                'Monitor ID': 'MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004',
+                'Monitor Serial Number': '00000000',
+                'Is Primary': 'No'
+            },
+            {
+                'Monitor ID': 'MONITOR\\ACR0001\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0001',
+                'Monitor Serial Number': '6KL82W2',
+                'Is Primary': 'Yes'
+            }
+        ];
+        callback(null, mockRecords);
+    }),
+}));
+
+describe('MonitorSwitcherApp - Refatorado', () => {
   let app;
 
   beforeEach(() => {
-    // Reseta os mocks antes de cada teste
     jest.clearAllMocks();
 
-    // Simula a leitura do arquivo de configuração
-    const mockConfigFile = 'DISPLAY1=ID_MONITOR_1\nDISPLAY2=ID_MONITOR_2';
+    // Mock do arquivo de configuração com IDs estáveis
+    const mockConfigFile = 'DISPLAY1=6KL82W2\nDISPLAY2=MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004';
     fs.readFileSync.mockReturnValue(mockConfigFile);
-    fs.existsSync.mockReturnValue(true); // Simula que todos os arquivos existem
+    fs.existsSync.mockReturnValue(true);
+    fs.unlinkSync.mockImplementation(() => {}); // Mock para a exclusão do arquivo temporário
+    
+    // Mock para a execução do comando de consulta
+    exec.mockImplementation((command, options, callback) => {
+        // Simula a criação do arquivo temporário com o CSV
+        if (command.includes('/scomma')) {
+            const tempPath = command.match(/"([^"]+)"$/)[1];
+            fs.existsSync.mockReturnValueOnce(true); // Garante que o teste leia o arquivo
+            fs.readFileSync.mockReturnValueOnce('CSV_CONTENT'); // O conteúdo real é mockado pelo csv-parse
+            callback(null, 'stdout', 'stderr');
+        } else if (command.includes('/SetPrimary')) {
+            // Simula a execução do comando de set primary
+            callback(null, 'stdout', 'stderr');
+        }
+    });
 
     app = new MonitorSwitcherApp();
-    // A função init é async, mas para os testes podemos chamá-la de forma síncrona
-    // pois estamos simulando todas as operações de IO.
-    app.init();
+    // A função init é async e precisa ser aguardada para sincronizar o estado
   });
 
   test('deve carregar a configuração dos monitores corretamente', () => {
-    expect(app.display1).toBe('ID_MONITOR_1');
-    expect(app.display2).toBe('ID_MONITOR_2');
+    app.loadDisplayConfig();
+    expect(app.display1StableId).toBe('6KL82W2');
+    expect(app.display2StableId).toBe('MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004');
   });
 
-  test('deve alternar para o DISPLAY2 se o principal atual for o DISPLAY1', async () => {
-    // Estado inicial (definido no init)
-    app.currentPrimary = 'ID_MONITOR_1';
+  test('deve sincronizar o estado inicial com o monitor principal real', async () => {
+    app.loadDisplayConfig();
+    await app.syncCurrentPrimaryState();
+    
+    // O mock do CSV define o monitor com Serial Number '6KL82W2' como principal.
+    expect(app.currentPrimaryStableId).toBe('6KL82W2');
+  });
 
+  test('deve alternar o monitor principal corretamente', async () => {
+    app.loadDisplayConfig();
+    // Sincroniza o estado para que o toggle saiba qual é o atual
+    await app.syncCurrentPrimaryState(); 
+    
+    // O estado atual é '6KL82W2' (DISPLAY1), o alvo deve ser DISPLAY2
     await app.togglePrimary();
 
-    // Verifica se o comando exec foi chamado com o ID do segundo monitor
+    // Verifica se o comando exec foi chamado para consultar o estado (1ª chamada)
     expect(exec).toHaveBeenCalledWith(
-      expect.stringContaining('/SetPrimary "ID_MONITOR_2"'),
+        expect.stringContaining('/scomma'),
+        expect.any(Object),
+        expect.any(Function)
+    );
+
+    // Verifica se o comando exec foi chamado para definir o novo principal (2ª chamada)
+    // O ID alvo é o Monitor ID do DISPLAY2: MONITOR\DHIFFFF\{4d36e96e-e325-11ce-bfc1-08002be10318}\0004
+    expect(exec).toHaveBeenCalledWith(
+      expect.stringContaining('/SetPrimary "MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004"'),
       expect.any(Function)
     );
-  });
-
-  test('deve alternar para o DISPLAY1 se o principal atual for o DISPLAY2', async () => {
-    // Define o estado atual como DISPLAY2
-    app.currentPrimary = 'ID_MONITOR_2';
-
-    await app.togglePrimary();
-
-    // Verifica se o comando exec foi chamado com o ID do primeiro monitor
-    expect(exec).toHaveBeenCalledWith(
-      expect.stringContaining('/SetPrimary "ID_MONITOR_1"'),
-      expect.any(Function)
-    );
-  });
-
-  test('deve atualizar o estado interno após a troca bem-sucedida', async () => {
-    app.currentPrimary = 'ID_MONITOR_1';
-
-    // Simula que a execução do comando foi bem-sucedida
-    // Simula que setPrimary atualiza o estado e resolve
-    app.setPrimary = jest.fn(async (id, mode) => {
-      app.currentPrimary = id;
-      return true;
-    });
-
-    await app.togglePrimary();
-
-    // Verifica se o estado interno foi atualizado para o novo monitor principal
-    expect(app.currentPrimary).toBe('ID_MONITOR_2');
+    
+    // Verifica se o estado interno foi atualizado após a chamada de setPrimary
+    // setPrimary é chamado com 'Modo Jogo', que define o estado interno para display2StableId
+    expect(app.currentPrimaryStableId).toBe('MONITOR\\DHIFFFF\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0004');
   });
 });

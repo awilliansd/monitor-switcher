@@ -1,6 +1,6 @@
 {
   "name": "monitor-switcher-electron",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Aplicativo de bandeja para alternar entre monitores usando MultiMonitorTool",
   "main": "main.js",
   "scripts": {
@@ -20,12 +20,12 @@
   "author": "Alessandro Willian",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^27.3.11",
+    "electron": "^39.2.3",
     "electron-builder": "^26.0.12",
     "jest": "^30.2.0"
   },
   "dependencies": {
-    "csv-parse": "^5.5.6"
+    "csv-parse": "^6.1.0"
   },
   "build": {
     "appId": "com.private.monitorswitcher",

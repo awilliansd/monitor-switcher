@@ -2,7 +2,7 @@
 
 Um aplicativo de bandeja do sistema desenvolvido em Electron para alternar facilmente entre monitores principais usando o MultiMonitorTool.
 
-![Monitor Switcher](https://img.shields.io/badge/version-1.0.3-blue.svg)
+![Monitor Switcher](https://img.shields.io/badge/version-1.0.13-blue.svg)
 ![Electron](https://img.shields.io/badge/Electron-27.0.0-brightgreen.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
 

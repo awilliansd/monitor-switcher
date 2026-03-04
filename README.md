@@ -161,55 +161,6 @@ Para problemas ou sugestões:
 2. Use a funcionalidade "Testar Configuração" para diagnóstico
 3. Abra uma issue no repositório do projeto
 
-## 📈 Versões
-
-### v1.0.13
-- Atualização de ícones
-- Correções de bugs menores
-
-### v1.0.12
-- Atualização de bibliotecas
-- Melhorias de performance
-
-### v1.0.11
-- Correção de problema com troca de monitores
-- Adição de testes automatizados
-
-### v1.0.10
-- Correção de notificações
-- Melhorias na detecção de monitores
-
-### v1.0.9
-- Adicionada opção de minimizar ao iniciar
-- Correção de problemas com inicialização automática
-
-### v1.0.8
-- Melhorias na interface de bandeja
-- Correção de problemas com múltiplas instâncias
-
-### v1.0.7
-- Adicionada opção de testar configuração
-- Melhorias na detecção de monitores
-
-### v1.0.6
-- Correção de problemas com notificações
-- Melhorias na documentação
-
-### v1.0.5
-- Adicionada opção de listar monitores
-- Melhorias na segurança
-
-### v1.0.4
-- Correção de problemas com inicialização automática
-- Melhorias na interface de usuário
-
-### v1.0.3
-- Interface de bandeja funcional
-- Alternação entre dois monitores
-- Notificações do sistema
-- Inicialização automática
-- Ferramentas de diagnóstico
-
 ---
 
 **Desenvolvido por Alessandro Willian**

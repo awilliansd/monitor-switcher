@@ -3,7 +3,7 @@
 Um aplicativo de bandeja do sistema desenvolvido em Electron para alternar facilmente entre monitores principais usando o MultiMonitorTool.
 
 ![Monitor Switcher](https://img.shields.io/badge/version-1.0.13-blue.svg)
-![Electron](https://img.shields.io/badge/Electron-27.0.0-brightgreen.svg)
+![Electron](https://img.shields.io/badge/Electron-39.2.3-brightgreen.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
 
 ## 📋 Descrição
@@ -162,6 +162,46 @@ Para problemas ou sugestões:
 3. Abra uma issue no repositório do projeto
 
 ## 📈 Versões
+
+### v1.0.13
+- Atualização de ícones
+- Correções de bugs menores
+
+### v1.0.12
+- Atualização de bibliotecas
+- Melhorias de performance
+
+### v1.0.11
+- Correção de problema com troca de monitores
+- Adição de testes automatizados
+
+### v1.0.10
+- Correção de notificações
+- Melhorias na detecção de monitores
+
+### v1.0.9
+- Adicionada opção de minimizar ao iniciar
+- Correção de problemas com inicialização automática
+
+### v1.0.8
+- Melhorias na interface de bandeja
+- Correção de problemas com múltiplas instâncias
+
+### v1.0.7
+- Adicionada opção de testar configuração
+- Melhorias na detecção de monitores
+
+### v1.0.6
+- Correção de problemas com notificações
+- Melhorias na documentação
+
+### v1.0.5
+- Adicionada opção de listar monitores
+- Melhorias na segurança
+
+### v1.0.4
+- Correção de problemas com inicialização automática
+- Melhorias na interface de usuário
 
 ### v1.0.3
 - Interface de bandeja funcional

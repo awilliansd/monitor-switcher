@@ -18,6 +18,7 @@ O Monitor Switcher é uma solução simples e eficiente para usuários que traba
   - Modo Reunião (Monitor 2)
   - Modo Jogo (Monitor 1)
 - **Notificações**: Feedback visual quando o monitor é alterado
+- **Auto-update**: Atualização automática via GitHub Releases para builds instalados
 - **Inicialização Automática**: Pode ser configurado para iniciar com o Windows
 - **Configuração Flexível**: Arquivo de configuração editável
 - **Ferramentas de Diagnóstico**: Listagem de monitores e teste de configuração
@@ -114,6 +115,7 @@ monitor-switcher/
 npm start          # Inicia em modo desenvolvimento
 npm run build      # Constrói a aplicação
 npm run dist       # Cria distribuível
+npm run dist:publish # Publica release (usado no pipeline por tag)
 npm run pack       # Empacota sem criar instalador
 ```
 

@@ -1,4 +1,5 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, Notification } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -24,6 +25,11 @@ class MonitorSwitcherApp {
         this.tray = null;
         this.currentPrimaryStableId = null;
         this.isInitialized = false;
+        this.autoUpdaterInitialized = false;
+        this.updateStatusLabel = 'Aguardando verificação';
+        this.isCheckingForUpdate = false;
+        this.isUpdateDownloaded = false;
+        this.isInstallingUpdate = false;
     }
 
     initializePaths() {
@@ -65,7 +71,15 @@ class MonitorSwitcherApp {
 
         this.loadDisplayConfig();
         this.createTray();
+        this.initializeAutoUpdater();
         await this.syncCurrentPrimaryState();
+
+        if (this.canUseAutoUpdater() && process.env.NODE_ENV !== 'test') {
+            setTimeout(() => this.checkForUpdates(false), 15000);
+            setInterval(() => this.checkForUpdates(false), 30 * 60 * 1000);
+        } else if (!this.canUseAutoUpdater()) {
+            this.setUpdateStatus('Atualização automática indisponível neste modo');
+        }
 
         const isAutoStarted = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
         if (!isAutoStarted && !this.isDev) {
@@ -330,6 +344,136 @@ class MonitorSwitcherApp {
         }
     }
 
+    showUpdateNotification(message, onClick = null) {
+        if (Notification.isSupported()) {
+            const notification = new Notification({
+                title: 'Monitor Switcher - Atualização',
+                body: message,
+                icon: this.iconPath,
+                silent: false
+            });
+
+            if (typeof onClick === 'function') {
+                notification.on('click', onClick);
+            }
+
+            notification.show();
+            return;
+        }
+
+        if (this.tray) {
+            this.tray.displayBalloon({
+                title: 'Monitor Switcher - Atualização',
+                content: message,
+                icon: this.iconPath
+            });
+        }
+    }
+
+    canUseAutoUpdater() {
+        return app.isPackaged && process.platform === 'win32';
+    }
+
+    setUpdateStatus(statusLabel) {
+        this.updateStatusLabel = statusLabel;
+        this.updateTrayMenu();
+    }
+
+    initializeAutoUpdater() {
+        if (this.autoUpdaterInitialized) return;
+        this.autoUpdaterInitialized = true;
+
+        if (!this.canUseAutoUpdater()) return;
+
+        autoUpdater.autoDownload = true;
+        autoUpdater.autoInstallOnAppQuit = false;
+
+        autoUpdater.on('checking-for-update', () => {
+            this.isCheckingForUpdate = true;
+            this.setUpdateStatus('Verificando atualizações...');
+        });
+
+        autoUpdater.on('update-available', info => {
+            this.setUpdateStatus(`Nova versão ${info.version} encontrada. Baixando...`);
+            this.showUpdateNotification(`Versão ${info.version} disponível. Download iniciado.`);
+        });
+
+        autoUpdater.on('update-not-available', () => {
+            this.isCheckingForUpdate = false;
+            this.isUpdateDownloaded = false;
+            this.setUpdateStatus('Aplicativo atualizado');
+        });
+
+        autoUpdater.on('download-progress', progress => {
+            const percent = Math.round(progress.percent || 0);
+            this.setUpdateStatus(`Baixando atualização... ${percent}%`);
+        });
+
+        autoUpdater.on('update-downloaded', info => {
+            this.isCheckingForUpdate = false;
+            this.isUpdateDownloaded = true;
+            this.setUpdateStatus(`Atualização pronta (${info.version})`);
+            this.showUpdateNotification(
+                `Versão ${info.version} pronta. Clique em "Atualizar agora" no menu.`,
+                () => this.installDownloadedUpdate()
+            );
+        });
+
+        autoUpdater.on('error', error => {
+            this.isCheckingForUpdate = false;
+            this.setUpdateStatus('Erro no auto-update');
+            console.error('Erro no auto-update:', error);
+        });
+    }
+
+    async checkForUpdates(manual = false) {
+        if (!this.canUseAutoUpdater()) {
+            this.setUpdateStatus('Atualização automática indisponível neste modo');
+            if (manual) {
+                this.showUpdateNotification('Auto-update disponível apenas no app instalado.');
+            }
+            return;
+        }
+
+        if (this.isCheckingForUpdate) {
+            if (manual) {
+                this.showUpdateNotification('Já existe uma verificação de atualização em andamento.');
+            }
+            return;
+        }
+
+        try {
+            this.isCheckingForUpdate = true;
+            await autoUpdater.checkForUpdates();
+        } catch (error) {
+            this.isCheckingForUpdate = false;
+            this.setUpdateStatus('Erro ao verificar atualização');
+            console.error('Erro ao verificar atualização:', error);
+            if (manual) {
+                this.showUpdateNotification('Não foi possível verificar atualizações.');
+            }
+        }
+    }
+
+    installDownloadedUpdate() {
+        if (!this.isUpdateDownloaded || this.isInstallingUpdate) {
+            return;
+        }
+
+        this.isInstallingUpdate = true;
+        this.setUpdateStatus('Instalando atualização...');
+
+        setTimeout(() => {
+            try {
+                autoUpdater.quitAndInstall(false, true);
+            } catch (error) {
+                this.isInstallingUpdate = false;
+                this.setUpdateStatus('Erro ao instalar atualização');
+                console.error('Erro ao instalar atualização:', error);
+            }
+        }, 250);
+    }
+
     async togglePrimary() {
         if (!this.display1StableId || !this.display2StableId) {
             return this.showError('Configuração de displays não carregada corretamente.');
@@ -366,6 +510,20 @@ class MonitorSwitcherApp {
             {
                 label: `${autoStartIcon} Iniciar com Windows`,
                 click: () => this.toggleAutoStart()
+            },
+            { type: 'separator' },
+            {
+                label: `🔄 Atualizações: ${this.updateStatusLabel}`,
+                enabled: false
+            },
+            {
+                label: '⬇️ Verificar atualizações agora',
+                click: () => this.checkForUpdates(true)
+            },
+            {
+                label: '⚡ Atualizar agora',
+                click: () => this.installDownloadedUpdate(),
+                enabled: this.isUpdateDownloaded
             },
             { type: 'separator' },
             {

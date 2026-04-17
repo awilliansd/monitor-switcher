@@ -8,6 +8,7 @@
     "test": "jest",
     "build": "electron-builder",
     "dist": "electron-builder --publish=never",
+    "dist:publish": "electron-builder --publish always",
     "pack": "electron-builder --dir"
   },
   "keywords": [
@@ -25,7 +26,8 @@
     "jest": "^30.2.0"
   },
   "dependencies": {
-    "csv-parse": "^6.1.0"
+    "csv-parse": "^6.1.0",
+    "electron-updater": "^6.6.2"
   },
   "build": {
     "appId": "com.private.monitorswitcher",
@@ -54,6 +56,14 @@
       "target": "nsis",
       "icon": "monitorswitcher.ico"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "awilliansd",
+        "repo": "monitor-switcher",
+        "releaseType": "release"
+      }
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

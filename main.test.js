@@ -15,6 +15,16 @@ jest.mock('csv-parse', () => ({
   parse: jest.fn(),
 }));
 
+jest.mock('electron-updater', () => ({
+  autoUpdater: {
+    autoDownload: true,
+    autoInstallOnAppQuit: false,
+    on: jest.fn(),
+    checkForUpdates: jest.fn(() => Promise.resolve()),
+    quitAndInstall: jest.fn(),
+  }
+}));
+
 jest.mock('electron', () => ({
   app: {
     getPath: jest.fn(() => '/tmp'),
@@ -57,7 +67,8 @@ jest.mock('electron', () => ({
 const fs = require('fs');
 const { exec } = require('child_process');
 const { parse } = require('csv-parse');
-const { dialog } = require('electron');
+const { dialog, Menu } = require('electron');
+const { autoUpdater } = require('electron-updater');
 
 describe('MonitorSwitcherApp', () => {
   let app;
@@ -256,6 +267,20 @@ describe('MonitorSwitcherApp', () => {
       expect(app.tray.setContextMenu).toHaveBeenCalledWith('mock-menu');
     });
 
+    test('deve incluir item para verificar atualização no menu', () => {
+      app.tray = {
+        setContextMenu: jest.fn()
+      };
+
+      app.updateTrayMenu();
+
+      const template = Menu.buildFromTemplate.mock.calls[0][0];
+      const checkItem = template.find(item => item.label === '⬇️ Verificar atualizações agora');
+
+      expect(checkItem).toBeDefined();
+      expect(typeof checkItem.click).toBe('function');
+    });
+
     test('deve alternar inicialização automática', () => {
       const mockSetLoginItemSettings = require('electron').app.setLoginItemSettings;
       
@@ -305,6 +330,34 @@ describe('MonitorSwitcherApp', () => {
       
       const { nativeImage } = require('electron');
       expect(nativeImage.createFromDataURL).toHaveBeenCalled();
+    });
+  });
+
+  describe('Auto Update', () => {
+    test('deve registrar eventos do autoUpdater quando empacotado', () => {
+      jest.spyOn(app, 'canUseAutoUpdater').mockReturnValue(true);
+      app.initializeAutoUpdater();
+
+      expect(autoUpdater.on).toHaveBeenCalled();
+      expect(autoUpdater.on).toHaveBeenCalledWith('update-downloaded', expect.any(Function));
+    });
+
+    test('não deve instalar atualização antes do download', () => {
+      app.isUpdateDownloaded = false;
+      app.installDownloadedUpdate();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    });
+
+    test('deve instalar atualização após download concluído', () => {
+      jest.useFakeTimers();
+      app.isUpdateDownloaded = true;
+
+      app.installDownloadedUpdate();
+      jest.runOnlyPendingTimers();
+
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+      jest.useRealTimers();
     });
   });
 });

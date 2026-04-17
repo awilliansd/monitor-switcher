@@ -335,7 +335,7 @@ describe('MonitorSwitcherApp', () => {
 
   describe('Auto Update', () => {
     test('deve registrar eventos do autoUpdater quando empacotado', () => {
-      require('electron').app.isPackaged = true;
+      jest.spyOn(app, 'canUseAutoUpdater').mockReturnValue(true);
       app.initializeAutoUpdater();
 
       expect(autoUpdater.on).toHaveBeenCalled();

@@ -386,7 +386,7 @@ class MonitorSwitcherApp {
         if (!this.canUseAutoUpdater()) return;
 
         autoUpdater.autoDownload = true;
-        autoUpdater.autoInstallOnAppQuit = false;
+        autoUpdater.autoInstallOnAppQuit = true;
 
         autoUpdater.on('checking-for-update', () => {
             this.isCheckingForUpdate = true;
@@ -412,11 +412,13 @@ class MonitorSwitcherApp {
         autoUpdater.on('update-downloaded', info => {
             this.isCheckingForUpdate = false;
             this.isUpdateDownloaded = true;
-            this.setUpdateStatus(`Atualização pronta (${info.version})`);
+            this.setUpdateStatus(`Atualização pronta (${info.version}) — instalando em 10s...`);
             this.showUpdateNotification(
-                `Versão ${info.version} pronta. Clique em "Atualizar agora" no menu.`,
+                `Versão ${info.version} baixada. O app será reiniciado em 10 segundos para instalar.`,
                 () => this.installDownloadedUpdate()
             );
+            // Auto-instala após 10 segundos
+            setTimeout(() => this.installDownloadedUpdate(), 10000);
         });
 
         autoUpdater.on('error', error => {
@@ -486,6 +488,34 @@ class MonitorSwitcherApp {
         }
     }
 
+    buildUpdateMenuItem() {
+        const busyPatterns = ['Verificando', 'Baixando', 'Instalando'];
+        const isBusy = busyPatterns.some(p => this.updateStatusLabel.startsWith(p));
+        const isUnavailable = this.updateStatusLabel.includes('indisponível') || this.updateStatusLabel.includes('indisponivel');
+
+        if (this.isUpdateDownloaded && !isBusy) {
+            return [{
+                label: '⚡ Instalar atualização',
+                click: () => this.installDownloadedUpdate()
+            }];
+        } else if (isBusy) {
+            return [{
+                label: `🔄 ${this.updateStatusLabel}`,
+                enabled: false
+            }];
+        } else if (isUnavailable) {
+            return [{
+                label: '🔄 Verificação indisponível',
+                enabled: false
+            }];
+        } else {
+            return [{
+                label: '🔄 Verificar atualizações',
+                click: () => this.checkForUpdates(true)
+            }];
+        }
+    }
+
     updateTrayMenu() {
         if (!this.tray) return;
         
@@ -512,19 +542,7 @@ class MonitorSwitcherApp {
                 click: () => this.toggleAutoStart()
             },
             { type: 'separator' },
-            {
-                label: `🔄 Atualizações: ${this.updateStatusLabel}`,
-                enabled: false
-            },
-            {
-                label: '⬇️ Verificar atualizações agora',
-                click: () => this.checkForUpdates(true)
-            },
-            {
-                label: '⚡ Atualizar agora',
-                click: () => this.installDownloadedUpdate(),
-                enabled: this.isUpdateDownloaded
-            },
+            ...this.buildUpdateMenuItem(),
             { type: 'separator' },
             {
                 label: '🛑 Sair',

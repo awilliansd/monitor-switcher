@@ -275,7 +275,7 @@ describe('MonitorSwitcherApp', () => {
       app.updateTrayMenu();
 
       const template = Menu.buildFromTemplate.mock.calls[0][0];
-      const checkItem = template.find(item => item.label === '⬇️ Verificar atualizações agora');
+      const checkItem = template.find(item => item.label === '🔄 Verificar atualizações');
 
       expect(checkItem).toBeDefined();
       expect(typeof checkItem.click).toBe('function');

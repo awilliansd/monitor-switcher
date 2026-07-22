@@ -40,7 +40,8 @@
       "output": "dist"
     },
     "files": [
-      "main.js"
+      "main.js",
+      "modules/**/*.js"
     ],
     "extraResources": [
       {

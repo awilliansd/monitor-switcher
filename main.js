@@ -1,20 +1,15 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, Notification } = require('electron');
+const { app, Tray, Menu, nativeImage, dialog, Notification, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { parse } = require('csv-parse');
+const {
+  APP_NAME, APP_USER_MODEL_ID, MODES, ENV, UPDATE_PHASE, TIMING,
+  RESOURCES, CLI_FLAGS, CSV_COLUMNS, FALLBACK_ICON_DATA_URL,
+} = require('./modules/constants');
 
 class MonitorSwitcherApp {
-    openConfigFile() {
-        const { shell } = require('electron');
-        if (fs.existsSync(this.configFile)) {
-            shell.openPath(this.configFile);
-        } else {
-            this.showError('Arquivo de configuração não encontrado.');
-        }
-    }
-
     constructor() {
         this.isDev = null;
         this.tool = null;
@@ -26,6 +21,7 @@ class MonitorSwitcherApp {
         this.currentPrimaryStableId = null;
         this.isInitialized = false;
         this.autoUpdaterInitialized = false;
+        this.updatePhase = UPDATE_PHASE.IDLE;
         this.updateStatusLabel = 'Aguardando verificação';
         this.isCheckingForUpdate = false;
         this.isUpdateDownloaded = false;
@@ -35,11 +31,11 @@ class MonitorSwitcherApp {
     initializePaths() {
         if (this.isInitialized) return;
 
-        this.isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+        this.isDev = process.env.NODE_ENV === ENV.DEVELOPMENT || !app.isPackaged;
 
-        this.tool = this.getResourcePath('MultiMonitorTool.exe');
-        this.configFile = this.getResourcePath('display_config.txt');
-        this.iconPath = this.getResourcePath('monitorswitcher.ico');
+        this.tool = this.getResourcePath(RESOURCES.TOOL);
+        this.configFile = this.getResourcePath(RESOURCES.CONFIG);
+        this.iconPath = this.getResourcePath(RESOURCES.ICON);
 
         this.isInitialized = true;
     }
@@ -56,7 +52,7 @@ class MonitorSwitcherApp {
         this.initializePaths();
 
         if (process.platform === 'win32') {
-            app.setAppUserModelId('MonitorSwitcher');
+            app.setAppUserModelId(APP_USER_MODEL_ID);
         }
 
         if (!fs.existsSync(this.tool)) {
@@ -74,16 +70,16 @@ class MonitorSwitcherApp {
         this.initializeAutoUpdater();
         await this.syncCurrentPrimaryState();
 
-        if (this.canUseAutoUpdater() && process.env.NODE_ENV !== 'test') {
-            setTimeout(() => this.checkForUpdates(false), 15000);
-            setInterval(() => this.checkForUpdates(false), 30 * 60 * 1000);
+        if (this.canUseAutoUpdater() && process.env.NODE_ENV !== ENV.TEST) {
+            setTimeout(() => this.checkForUpdates(false), TIMING.INITIAL_UPDATE_CHECK_MS);
+            setInterval(() => this.checkForUpdates(false), TIMING.UPDATE_CHECK_INTERVAL_MS);
         } else if (!this.canUseAutoUpdater()) {
-            this.setUpdateStatus('Atualização automática indisponível neste modo');
+            this.setUpdateStatus(UPDATE_PHASE.UNAVAILABLE, 'Atualização automática indisponível neste modo');
         }
 
         const isAutoStarted = process.argv.includes('--hidden') || app.getLoginItemSettings().wasOpenedAtLogin;
         if (!isAutoStarted && !this.isDev) {
-            this.showBalloon('Monitor Switcher iniciado');
+            this.showBalloon(`${APP_NAME} iniciado`);
         }
     }
 
@@ -93,16 +89,28 @@ class MonitorSwitcherApp {
             const lines = data.split('\n');
             this.display1StableId = '';
             this.display2StableId = '';
-            lines.forEach(line => {
+            for (const line of lines) {
                 const trimmedLine = line.trim();
                 if (trimmedLine.startsWith('DISPLAY1=')) {
                     this.display1StableId = trimmedLine.substring('DISPLAY1='.length).trim();
                 } else if (trimmedLine.startsWith('DISPLAY2=')) {
                     this.display2StableId = trimmedLine.substring('DISPLAY2='.length).trim();
                 }
-            });
+            }
         } catch (error) {
             console.error('Erro ao carregar configuração:', error);
+        }
+    }
+
+    openConfigFile() {
+        if (fs.existsSync(this.configFile)) {
+            const result = shell.openPath(this.configFile);
+            if (typeof result === 'string' && result.length > 0) {
+                console.error(`Erro ao abrir configuração: ${result}`);
+                this.showError(`Não foi possível abrir o arquivo de configuração (${result}).`);
+            }
+        } else {
+            this.showError('Arquivo de configuração não encontrado.');
         }
     }
 
@@ -112,11 +120,11 @@ class MonitorSwitcherApp {
         if (fs.existsSync(this.iconPath)) {
             trayIcon = nativeImage.createFromPath(this.iconPath);
         } else {
-            trayIcon = nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
+            trayIcon = nativeImage.createFromDataURL(FALLBACK_ICON_DATA_URL);
         }
 
         this.tray = new Tray(trayIcon);
-        this.tray.setToolTip('Monitor Switcher');
+        this.tray.setToolTip(APP_NAME);
         this.updateTrayMenu();
     }
 
@@ -131,10 +139,10 @@ class MonitorSwitcherApp {
 
     async getMonitorStateForToggle() {
         const tempCsvPath = path.join(app.getPath('temp'), 'monitors.csv');
-        const command = `"${this.tool}" /scomma "${tempCsvPath}"`;
+        const command = `"${this.tool}" ${CLI_FLAGS.SCOMMA} "${tempCsvPath}"`;
 
         return new Promise((resolve) => {
-            exec(command, { timeout: 10000 }, async (error, stdout, stderr) => {
+            exec(command, { timeout: TIMING.EXEC_TIMEOUT_MS }, async (error) => {
                 if (error) {
                     this.showError(`Erro ao consultar monitores:\n${error.message}`);
                     return resolve(null);
@@ -149,18 +157,18 @@ class MonitorSwitcherApp {
                     const csvData = fs.readFileSync(tempCsvPath, 'utf8');
                     fs.unlinkSync(tempCsvPath);
 
-                    const processRecords = (records, delimiter) => {
-                        let primaryMonitor = records.find(r => r.Primary === 'Yes');
+                    const processRecords = (records) => {
+                        let primaryMonitor = records.find(r => r[CSV_COLUMNS.PRIMARY] === CSV_COLUMNS.YES);
 
                         if (!primaryMonitor) {
                             primaryMonitor = records.find(r =>
-                                r['Is Primary'] === 'Yes' ||
-                                r['Is Primary'] === 'Sim'
+                                r[CSV_COLUMNS.IS_PRIMARY] === CSV_COLUMNS.YES ||
+                                r[CSV_COLUMNS.IS_PRIMARY] === CSV_COLUMNS.SIM
                             );
                         }
 
                         if (!primaryMonitor) {
-                            primaryMonitor = records.find(r => r.Active === 'Yes' && r.Disconnected === 'No');
+                            primaryMonitor = records.find(r => r[CSV_COLUMNS.ACTIVE] === CSV_COLUMNS.YES && r[CSV_COLUMNS.DISCONNECTED] === CSV_COLUMNS.NO);
                         }
 
                         if (!primaryMonitor) {
@@ -168,13 +176,13 @@ class MonitorSwitcherApp {
                             return resolve(null);
                         }
 
-                        let currentPrimaryStableId = primaryMonitor['Monitor Serial Number'] || primaryMonitor['Monitor ID'];
+                        let currentPrimaryStableId = primaryMonitor[CSV_COLUMNS.MONITOR_SERIAL] || primaryMonitor[CSV_COLUMNS.MONITOR_ID];
 
                         if (currentPrimaryStableId.startsWith('00000') || currentPrimaryStableId === '') {
-                            currentPrimaryStableId = primaryMonitor['Monitor ID'];
+                            currentPrimaryStableId = primaryMonitor[CSV_COLUMNS.MONITOR_ID];
                         }
 
-                        const currentPrimaryId = primaryMonitor['Monitor ID'];
+                        const currentPrimaryId = primaryMonitor[CSV_COLUMNS.MONITOR_ID];
 
                         const compareStableIds = (configuredId, detectedId) => {
                             if (!configuredId || !detectedId) return false;
@@ -186,11 +194,14 @@ class MonitorSwitcherApp {
                                 return true;
                             }
 
-                            if (!configuredId.startsWith('MONITOR\\') && !detectedId.startsWith('MONITOR\\')) {
+                            const configHasPrefix = configuredId.startsWith('MONITOR\\');
+                            const detectedHasPrefix = detectedId.startsWith('MONITOR\\');
+
+                            if (!configHasPrefix && !detectedHasPrefix) {
                                 return configuredId.includes(detectedId) || detectedId.includes(configuredId);
                             }
 
-                            if (configuredId.startsWith('MONITOR\\') && detectedId.startsWith('MONITOR\\')) {
+                            if (configHasPrefix && detectedHasPrefix) {
                                 const configuredParts = configuredId.split('\\');
                                 const detectedParts = detectedId.split('\\');
 
@@ -206,12 +217,12 @@ class MonitorSwitcherApp {
                                 return matches >= 2;
                             }
 
-                            if (configuredId.startsWith('MONITOR\\') && !detectedId.startsWith('MONITOR\\')) {
+                            if (configHasPrefix && !detectedHasPrefix) {
                                 const shortIdFromConfig = configuredId.split('\\')[1];
                                 return detectedId.includes(shortIdFromConfig) || shortIdFromConfig.includes(detectedId);
                             }
 
-                            if (!configuredId.startsWith('MONITOR\\') && detectedId.startsWith('MONITOR\\')) {
+                            if (!configHasPrefix && detectedHasPrefix) {
                                 const shortIdFromDetected = detectedId.split('\\')[1];
                                 return configuredId.includes(shortIdFromDetected) || shortIdFromDetected.includes(configuredId);
                             }
@@ -227,19 +238,19 @@ class MonitorSwitcherApp {
 
                         if (isDisplay1Primary) {
                             targetStableId = this.display2StableId;
-                            targetModeName = 'Modo Jogo';
+                            targetModeName = MODES.GAME;
                         } else if (isDisplay2Primary) {
                             targetStableId = this.display1StableId;
-                            targetModeName = 'Modo Reunião';
+                            targetModeName = MODES.MEETING;
                         } else {
                             this.showError(`Monitor principal atual não corresponde a DISPLAY1 ou DISPLAY2 configurados.`);
                             return resolve(null);
                         }
 
                         const targetMonitor = records.find(r => {
-                            let stableId = r['Monitor Serial Number'] || r['Monitor ID'];
+                            let stableId = r[CSV_COLUMNS.MONITOR_SERIAL] || r[CSV_COLUMNS.MONITOR_ID];
                             if (stableId.startsWith('00000') || !stableId) {
-                                stableId = r['Monitor ID'];
+                                stableId = r[CSV_COLUMNS.MONITOR_ID];
                             }
                             return compareStableIds(targetStableId, stableId);
                         });
@@ -249,7 +260,7 @@ class MonitorSwitcherApp {
                             return resolve(null);
                         }
 
-                        const targetId = targetMonitor['Monitor ID'];
+                        const targetId = targetMonitor[CSV_COLUMNS.MONITOR_ID];
 
                         this.currentPrimaryStableId = isDisplay1Primary ? this.display1StableId : this.display2StableId;
 
@@ -269,7 +280,7 @@ class MonitorSwitcherApp {
                         delimiter: ','
                     }, (err, records) => {
                         if (!err && records && records.length > 0) {
-                            return processRecords(records, ',');
+                            return processRecords(records);
                         }
 
                         parse(csvData, {
@@ -279,7 +290,7 @@ class MonitorSwitcherApp {
                             delimiter: ';'
                         }, (err2, records2) => {
                             if (!err2 && records2 && records2.length > 0) {
-                                return processRecords(records2, ';');
+                                return processRecords(records2);
                             }
 
                             this.showError('Erro ao analisar dados de monitor.');
@@ -309,15 +320,14 @@ class MonitorSwitcherApp {
             return;
         }
 
-        const command = `"${this.tool}" /SetPrimary "${displayId}"`;
-
-        exec(command, (error, stdout, stderr) => {
+        // D2: execFile com args array evita shell quoting no displayId.
+        execFile(this.tool, [CLI_FLAGS.SET_PRIMARY, displayId], { timeout: TIMING.EXEC_TIMEOUT_MS }, (error) => {
             if (error) {
                 this.showError(`Erro ao alterar monitor:\n${error.message}`);
                 return;
             }
 
-            if (modeName === 'Modo Jogo') {
+            if (modeName === MODES.GAME) {
                 this.currentPrimaryStableId = this.display2StableId;
             } else {
                 this.currentPrimaryStableId = this.display1StableId;
@@ -330,14 +340,14 @@ class MonitorSwitcherApp {
     showBalloon(message) {
         if (Notification.isSupported()) {
             new Notification({
-                title: 'Monitor Switcher',
+                title: APP_NAME,
                 body: message,
                 icon: this.iconPath,
                 silent: false
             }).show();
         } else if (this.tray) {
             this.tray.displayBalloon({
-                title: 'Monitor Switcher',
+                title: APP_NAME,
                 content: message,
                 icon: this.iconPath
             });
@@ -345,9 +355,10 @@ class MonitorSwitcherApp {
     }
 
     showUpdateNotification(message, onClick = null) {
+        const title = `${APP_NAME} - Atualização`;
         if (Notification.isSupported()) {
             const notification = new Notification({
-                title: 'Monitor Switcher - Atualização',
+                title: title,
                 body: message,
                 icon: this.iconPath,
                 silent: false
@@ -363,7 +374,7 @@ class MonitorSwitcherApp {
 
         if (this.tray) {
             this.tray.displayBalloon({
-                title: 'Monitor Switcher - Atualização',
+                title: title,
                 content: message,
                 icon: this.iconPath
             });
@@ -374,8 +385,14 @@ class MonitorSwitcherApp {
         return app.isPackaged && process.platform === 'win32';
     }
 
-    setUpdateStatus(statusLabel) {
+    setUpdateStatus(phase, statusLabel) {
+        this.updatePhase = phase;
         this.updateStatusLabel = statusLabel;
+        if (phase === UPDATE_PHASE.CHECKING) {
+            this.isCheckingForUpdate = true;
+        } else if (phase !== UPDATE_PHASE.DOWNLOADING) {
+            this.isCheckingForUpdate = false;
+        }
         this.updateTrayMenu();
     }
 
@@ -389,48 +406,43 @@ class MonitorSwitcherApp {
         autoUpdater.autoInstallOnAppQuit = true;
 
         autoUpdater.on('checking-for-update', () => {
-            this.isCheckingForUpdate = true;
-            this.setUpdateStatus('Verificando atualizações...');
+            this.setUpdateStatus(UPDATE_PHASE.CHECKING, 'Verificando atualizações...');
         });
 
         autoUpdater.on('update-available', info => {
-            this.setUpdateStatus(`Nova versão ${info.version} encontrada. Baixando...`);
+            this.setUpdateStatus(UPDATE_PHASE.DOWNLOADING, `Nova versão ${info.version} encontrada. Baixando...`);
             this.showUpdateNotification(`Versão ${info.version} disponível. Download iniciado.`);
         });
 
         autoUpdater.on('update-not-available', () => {
-            this.isCheckingForUpdate = false;
             this.isUpdateDownloaded = false;
-            this.setUpdateStatus('Aplicativo atualizado');
+            this.setUpdateStatus(UPDATE_PHASE.IDLE, 'Aplicativo atualizado');
         });
 
         autoUpdater.on('download-progress', progress => {
             const percent = Math.round(progress.percent || 0);
-            this.setUpdateStatus(`Baixando atualização... ${percent}%`);
+            this.setUpdateStatus(UPDATE_PHASE.DOWNLOADING, `Baixando atualização... ${percent}%`);
         });
 
         autoUpdater.on('update-downloaded', info => {
-            this.isCheckingForUpdate = false;
             this.isUpdateDownloaded = true;
-            this.setUpdateStatus(`Atualização pronta (${info.version}) — instalando em 10s...`);
+            this.setUpdateStatus(UPDATE_PHASE.DOWNLOADED, `Atualização pronta (${info.version}) — instalando em 10s...`);
             this.showUpdateNotification(
                 `Versão ${info.version} baixada. O app será reiniciado em 10 segundos para instalar.`,
                 () => this.installDownloadedUpdate()
             );
-            // Auto-instala após 10 segundos
-            setTimeout(() => this.installDownloadedUpdate(), 10000);
+            setTimeout(() => this.installDownloadedUpdate(), TIMING.AUTO_INSTALL_MS);
         });
 
         autoUpdater.on('error', error => {
-            this.isCheckingForUpdate = false;
-            this.setUpdateStatus('Erro no auto-update');
+            this.setUpdateStatus(UPDATE_PHASE.ERROR, 'Erro no auto-update');
             console.error('Erro no auto-update:', error);
         });
     }
 
     async checkForUpdates(manual = false) {
         if (!this.canUseAutoUpdater()) {
-            this.setUpdateStatus('Atualização automática indisponível neste modo');
+            this.setUpdateStatus(UPDATE_PHASE.UNAVAILABLE, 'Atualização automática indisponível neste modo');
             if (manual) {
                 this.showUpdateNotification('Auto-update disponível apenas no app instalado.');
             }
@@ -449,7 +461,7 @@ class MonitorSwitcherApp {
             await autoUpdater.checkForUpdates();
         } catch (error) {
             this.isCheckingForUpdate = false;
-            this.setUpdateStatus('Erro ao verificar atualização');
+            this.setUpdateStatus(UPDATE_PHASE.ERROR, 'Erro ao verificar atualização');
             console.error('Erro ao verificar atualização:', error);
             if (manual) {
                 this.showUpdateNotification('Não foi possível verificar atualizações.');
@@ -463,17 +475,17 @@ class MonitorSwitcherApp {
         }
 
         this.isInstallingUpdate = true;
-        this.setUpdateStatus('Instalando atualização...');
+        this.setUpdateStatus(UPDATE_PHASE.INSTALLING, 'Instalando atualização...');
 
         setTimeout(() => {
             try {
                 autoUpdater.quitAndInstall(false, true);
             } catch (error) {
                 this.isInstallingUpdate = false;
-                this.setUpdateStatus('Erro ao instalar atualização');
+                this.setUpdateStatus(UPDATE_PHASE.ERROR, 'Erro ao instalar atualização');
                 console.error('Erro ao instalar atualização:', error);
             }
-        }, 250);
+        }, TIMING.INSTALL_PRE_DELAY_MS);
     }
 
     async togglePrimary() {
@@ -489,42 +501,44 @@ class MonitorSwitcherApp {
     }
 
     buildUpdateMenuItem() {
-        const busyPatterns = ['Verificando', 'Baixando', 'Instalando'];
-        const isBusy = busyPatterns.some(p => this.updateStatusLabel.startsWith(p));
-        const isUnavailable = this.updateStatusLabel.includes('indisponível') || this.updateStatusLabel.includes('indisponivel');
+        const phase = this.updatePhase;
 
-        if (this.isUpdateDownloaded && !isBusy) {
+        if (this.isUpdateDownloaded && phase !== UPDATE_PHASE.CHECKING && phase !== UPDATE_PHASE.DOWNLOADING && phase !== UPDATE_PHASE.INSTALLING) {
             return [{
                 label: '⚡ Instalar atualização',
                 click: () => this.installDownloadedUpdate()
             }];
-        } else if (isBusy) {
+        }
+
+        if (phase === UPDATE_PHASE.CHECKING || phase === UPDATE_PHASE.DOWNLOADING || phase === UPDATE_PHASE.INSTALLING) {
             return [{
                 label: `🔄 ${this.updateStatusLabel}`,
                 enabled: false
             }];
-        } else if (isUnavailable) {
+        }
+
+        if (phase === UPDATE_PHASE.UNAVAILABLE) {
             return [{
                 label: '🔄 Verificação indisponível',
                 enabled: false
             }];
-        } else {
-            return [{
-                label: '🔄 Verificar atualizações',
-                click: () => this.checkForUpdates(true)
-            }];
         }
+
+        return [{
+            label: '🔄 Verificar atualizações',
+            click: () => this.checkForUpdates(true)
+        }];
     }
 
     updateTrayMenu() {
         if (!this.tray) return;
-        
+
         const autoStartEnabled = app.getLoginItemSettings().openAtLogin;
         const autoStartIcon = autoStartEnabled ? '✅' : '⬜';
-        
+
         const contextMenu = Menu.buildFromTemplate([
             {
-                label: '🖥️ Monitor Switcher',
+                label: `🖥️ ${APP_NAME}`,
                 enabled: false
             },
             { type: 'separator' },
@@ -560,7 +574,7 @@ class MonitorSwitcherApp {
         app.setLoginItemSettings({
             openAtLogin: willOpenAtLogin,
             openAsHidden: true,
-            name: 'Monitor Switcher',
+            name: APP_NAME,
             path: process.execPath
         });
 
@@ -576,29 +590,26 @@ module.exports = MonitorSwitcherApp;
 if (require.main === module) {
     let monitorSwitcher = null;
 
-    app.whenReady().then(() => {
-        monitorSwitcher = new MonitorSwitcherApp();
-        monitorSwitcher.init().catch(error => {
-            console.error('Erro durante inicialização:', error);
-        });
-    });
-
-    app.on('window-all-closed', () => {
-        if (process.platform !== 'darwin') {
-        }
-    });
-
-    app.on('before-quit', () => {
-        if (monitorSwitcher && monitorSwitcher.tray) {
-            monitorSwitcher.tray.destroy();
-        }
-    });
-
     const gotTheLock = app.requestSingleInstanceLock();
 
     if (!gotTheLock) {
         app.quit();
     } else {
-        app.on('second-instance', () => { });
+        app.on('second-instance', () => {
+            // Tray-only: nada a fazer, mas ativamos a janela/bandeja se desejado no futuro.
+        });
+
+        app.whenReady().then(() => {
+            monitorSwitcher = new MonitorSwitcherApp();
+            monitorSwitcher.init().catch(error => {
+                console.error('Erro durante inicialização:', error);
+            });
+        });
+
+        app.on('before-quit', () => {
+            if (monitorSwitcher && monitorSwitcher.tray) {
+                monitorSwitcher.tray.destroy();
+            }
+        });
     }
 }

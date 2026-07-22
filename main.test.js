@@ -9,6 +9,7 @@ jest.mock('fs', () => ({
 
 jest.mock('child_process', () => ({
   exec: jest.fn(),
+  execFile: jest.fn(),
 }));
 
 jest.mock('csv-parse', () => ({
@@ -65,7 +66,7 @@ jest.mock('electron', () => ({
 }));
 
 const fs = require('fs');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const { parse } = require('csv-parse');
 const { dialog, Menu } = require('electron');
 const { autoUpdater } = require('electron-updater');
@@ -153,6 +154,7 @@ describe('MonitorSwitcherApp', () => {
 
   describe('Lógica de Alternância', () => {
     test('deve alternar de DISPLAY1 para DISPLAY2', async () => {
+      app.initializePaths();
       const mockRecords = [
         {
           'Monitor ID': 'MONITOR\\DELA114\\{4d36e96e-e325-11ce-bfc1-08002be10318}\\0003',
@@ -176,8 +178,11 @@ describe('MonitorSwitcherApp', () => {
 
       await app.togglePrimary();
 
-      expect(exec).toHaveBeenCalledWith(
-        expect.stringContaining('/SetPrimary'),
+      // D2: setPrimary agora usa execFile com array de args (evita shell quoting)
+      expect(execFile).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([expect.stringContaining('/SetPrimary')]),
+        expect.any(Object),
         expect.any(Function)
       );
     });
